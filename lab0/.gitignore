@@ -1,0 +1,12 @@
+# Build artifacts
+kernel.bin
+kernel.fit
+src/*.o
+src/*.elf
+src/kernel.bin
+
+# Device tree blob (download separately)
+src/x1_orangepi-rv2.dtb
+
+# macOS metadata
+.DS_Store
