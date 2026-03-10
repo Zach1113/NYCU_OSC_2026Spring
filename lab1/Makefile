@@ -51,11 +51,11 @@ fit: kernel.bin
 # --- QEMU ---
 .PHONY: run
 run: kernel.bin
-	$(QEMU) -M virt -m 128M -kernel kernel.bin -nographic -monitor none
+	$(QEMU) -M virt -kernel kernel.bin -display none -nographic
 
 .PHONY: debug
 debug: kernel.bin
-	$(QEMU) -M virt -m 128M -kernel kernel.bin -nographic -monitor none -S -s
+	$(QEMU) -M virt -kernel kernel.bin -display none -nographic -S -s
 
 # --- Clean ---
 .PHONY: clean

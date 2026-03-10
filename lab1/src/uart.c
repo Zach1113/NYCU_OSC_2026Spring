@@ -1,15 +1,11 @@
 /*
- * uart.c - Exercise 2: UART driver
- *
  * QEMU virt:     base = 0x10000000, byte-width registers, LSR at offset 0x5
  * OrangePi RV2:  base = 0xD4017000, 32-bit registers,     LSR at offset 0x14
- *
- * Toggle the #defines below when switching platforms.
  */
 
 /* ---- Platform selection ---- */
-/* #define PLATFORM_QEMU */
-#define PLATFORM_BOARD  /* OrangePi RV2 */
+#define PLATFORM_QEMU
+/*#define PLATFORM_BOARD */  /* OrangePi RV2 */
 
 #ifdef PLATFORM_QEMU
   #define UART_BASE  0x10000000UL
@@ -49,7 +45,7 @@ void uart_puts(const char *s) {
         uart_putc(*s++);
 }
 
-/* Print unsigned long as 16-digit hex (e.g. 0x0000000000000002) */
+/* Print unsigned long as 16-digit hex */
 void uart_hex(unsigned long h) {
     uart_puts("0x");
     for (int shift = 60; shift >= 0; shift -= 4) {

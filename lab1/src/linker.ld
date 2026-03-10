@@ -20,5 +20,5 @@ SECTIONS
 
     . = ALIGN(16);
     . = . + 0x8000;    /* 32 KB stack */
-    _end = .;          /* stack pointer starts here, grows downward */
+    _end = .;          /* stack pointer starts here */
 }

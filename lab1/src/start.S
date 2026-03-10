@@ -13,6 +13,6 @@ clear_bss:
 clear_bss_done:
 
     /* Set up the stack pointer */
-    la   sp, _end                 /* _end is top of stack region */
+    la   sp, _end
 
     tail start_kernel             /* jump to C (tail: no return) */

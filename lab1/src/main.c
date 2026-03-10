@@ -1,19 +1,7 @@
-/*
- * main.c - Lab 1 kernel entry point
- *
- * Exercise 3: Simple shell (help, hello)
- * Exercise 4: SBI ecall + info command
- */
-
-/* ---- UART interface (from uart.c) ---- */
 extern char uart_getc(void);
 extern void uart_putc(char c);
 extern void uart_puts(const char *s);
 extern void uart_hex(unsigned long h);
-
-/* ============================================================
- * Exercise 4 — SBI ecall
- * ============================================================ */
 
 #define SBI_EXT_BASE  0x10
 
@@ -27,8 +15,6 @@ struct sbiret {
 };
 
 /*
- * sbi_ecall - invoke OpenSBI via the RISC-V ecall instruction.
- *
  *   a7 = extension ID
  *   a6 = function ID
  *   a0-a5 = arguments
@@ -56,11 +42,6 @@ struct sbiret sbi_ecall(int ext, int fid,
     return ret;
 }
 
-/* ============================================================
- * Exercise 3 — Shell helpers
- * ============================================================ */
-
-/* Read one line into buf (blocking, with echo and backspace support) */
 static void readline(char *buf, int max) {
     int i = 0;
     while (i < max - 1) {
@@ -88,10 +69,7 @@ static int streq(const char *a, const char *b) {
     return *a == '\0' && *b == '\0';
 }
 
-/* ============================================================
- * Shell commands
- * ============================================================ */
-
+/* Shell commands */
 static void cmd_help(void) {
     uart_puts("Available commands:\n");
     uart_puts("  help   - Show this help message\n");
@@ -122,9 +100,6 @@ static void cmd_info(void) {
     uart_putc('\n');
 }
 
-/* ============================================================
- * Kernel entry (called from start.S)
- * ============================================================ */
 void start_kernel(void) {
     uart_puts("\nNYCU OSC2026 RISC-V Kernel\n");
     uart_puts("Type 'help' for available commands.\n\n");
