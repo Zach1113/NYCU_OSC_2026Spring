@@ -1,41 +1,44 @@
 #!/bin/bash
 
-# Lab 1 Deployment Script for OrangePi RV2
-# Automates copying the kernel.fit to the SD card
+# Lab 2 deployment script for OrangePi RV2.
+# Copies an existing FIT image to SD (build separately via make fit).
 
-MOUNT_POINT="/mnt/sdboot"
-PARTITION="/dev/sda1"
-KERNEL_FIT="kernel.fit"
+set -euo pipefail
 
-# 1. Ensure we are in the lab1 directory or kernel.fit is present
-if [ ! -f "$KERNEL_FIT" ]; then
-    echo "Error: $KERNEL_FIT not found in the current directory."
-    echo "Please run this script from the lab1/ directory after running 'make fit'."
+MOUNT_POINT="${MOUNT_POINT:-/mnt/sdboot}"
+PARTITION="${PARTITION:-/dev/sda1}"
+FIT_IMAGE="${FIT_IMAGE:-kernel.fit}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+cd "$SCRIPT_DIR"
+
+if [ ! -f "$FIT_IMAGE" ]; then
+    echo "Error: $FIT_IMAGE not found in $SCRIPT_DIR"
+    echo "Hint: run 'make fit' first, then run this script"
     exit 1
 fi
 
-# 2. Create mount point if it doesn't exist
-echo "Preparing mount point..."
+echo "[1/4] Preparing mount point: $MOUNT_POINT"
 sudo mkdir -p "$MOUNT_POINT"
 
-# 3. Mount the SD card (USB card reader)
-echo "Mounting $PARTITION to $MOUNT_POINT..."
+echo "[2/4] Mounting $PARTITION -> $MOUNT_POINT"
 if ! sudo mount "$PARTITION" "$MOUNT_POINT"; then
-    echo "Error: Failed to mount $PARTITION."
-    echo "Check if the SD card reader is plugged in and recognized as $PARTITION (lsblk)."
+    echo "Error: Failed to mount $PARTITION"
+    echo "Hint: run lsblk to check your SD partition path"
     exit 1
 fi
 
-# 4. Copy the kernel
-echo "Copying $KERNEL_FIT..."
-sudo cp "$KERNEL_FIT" "$MOUNT_POINT/kernel.fit"
+cleanup() {
+    echo "[4/4] Syncing and unmounting"
+    sudo sync
+    sudo umount "$MOUNT_POINT"
+}
+trap cleanup EXIT
 
-# 5. Sync and Clean up
-echo "Syncing and unmounting..."
-sudo sync
-sudo umount "$MOUNT_POINT"
+echo "[3/4] Copying $FIT_IMAGE to SD boot partition"
+sudo cp "$FIT_IMAGE" "$MOUNT_POINT/kernel.fit"
 
 echo "------------------------------------------------"
-echo "Success! kernel.fit copied to SD card."
-echo "You can now safely remove the card reader."
+echo "Success: kernel.fit has been deployed to $PARTITION"
 echo "------------------------------------------------"
