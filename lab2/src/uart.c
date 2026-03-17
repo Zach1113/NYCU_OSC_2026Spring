@@ -81,11 +81,16 @@ unsigned long uart_base_addr(void) {
     return uart_base;
 }
 
-/* Read one character (blocking) */
-char uart_getc(void) {
+/* Read one raw byte (blocking) */
+char uart_getc_raw(void) {
     while ((uart_read_reg(uart_lsr_off()) & LSR_DR) == 0)
         ;
-    char c = (char)(uart_read_reg(uart_data_off()) & 0xFF);
+    return (char)(uart_read_reg(uart_data_off()) & 0xFF);
+}
+
+/* Read one character (blocking) */
+char uart_getc(void) {
+    char c = uart_getc_raw();
     return c == '\r' ? '\n' : c;   /* normalize CR -> LF */
 }
 
@@ -102,6 +107,25 @@ void uart_putc(char c) {
 void uart_puts(const char *s) {
     while (*s)
         uart_putc(*s++);
+}
+
+/* Print unsigned long as decimal */
+void uart_dec(unsigned long v) {
+    char buf[21];
+    int i = 0;
+
+    if (v == 0) {
+        uart_putc('0');
+        return;
+    }
+
+    while (v > 0) {
+        buf[i++] = (char)('0' + (v % 10UL));
+        v /= 10UL;
+    }
+
+    while (i-- > 0)
+        uart_putc(buf[i]);
 }
 
 /* Print unsigned long as 16-digit hex */

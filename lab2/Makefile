@@ -7,7 +7,8 @@ CC       = $(CROSS)gcc
 LD       = $(CROSS)ld
 OBJCOPY  = $(CROSS)objcopy
 
-CFLAGS   = -Wall -mcmodel=medany -ffreestanding -nostdlib -nostartfiles -g
+CFLAGS   = -Wall -mcmodel=medany -ffreestanding -nostdlib -nostartfiles -g \
+		   -march=rv64imac_zicsr_zifencei -mabi=lp64
 QEMU     = qemu-system-riscv64
 PYTHON   = python3
 

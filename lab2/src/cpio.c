@@ -148,7 +148,7 @@ void cpio_ls(void) {
             name[8] == '!' && name[9] == '!')
             break;
 
-        uart_hex(filesz);
+        uart_dec(filesz);
         uart_puts(" ");
         uart_puts(name);
         uart_putc('\n');

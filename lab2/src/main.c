@@ -34,6 +34,8 @@ struct load_header {
 
 static const void *g_initrd_start;
 static const void *g_initrd_end;
+static unsigned long g_boot_hartid;
+static const void *g_boot_fdt;
 
 /*
  *   a7 = extension ID
@@ -64,17 +66,17 @@ struct sbiret sbi_ecall(int ext, int fid,
 }
 
 static unsigned long uart_get_u32_le(void) {
-    unsigned long b0 = (unsigned char)uart_getc();
-    unsigned long b1 = (unsigned char)uart_getc();
-    unsigned long b2 = (unsigned char)uart_getc();
-    unsigned long b3 = (unsigned char)uart_getc();
+    unsigned long b0 = (unsigned char)uart_getc_raw();
+    unsigned long b1 = (unsigned char)uart_getc_raw();
+    unsigned long b2 = (unsigned char)uart_getc_raw();
+    unsigned long b3 = (unsigned char)uart_getc_raw();
     return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
 }
 
 static void uart_read_exact(void *dst, unsigned long n, unsigned long *sum) {
     unsigned char *p = (unsigned char *)dst;
     while (n--) {
-        unsigned char v = (unsigned char)uart_getc();
+        unsigned char v = (unsigned char)uart_getc_raw();
         *p++ = v;
         if (sum)
             *sum += v;
@@ -234,7 +236,17 @@ static void cmd_load(void) {
     uart_hex(KERNEL_LOAD_ADDR);
     uart_putc('\n');
 
-    ((void (*)(void))KERNEL_LOAD_ADDR)();
+    asm volatile(
+        "mv a0, %0\n"
+        "mv a1, %1\n"
+        "fence.i\n"
+        "jr %2\n"
+        :
+        : "r"(g_boot_hartid), "r"(g_boot_fdt), "r"(KERNEL_LOAD_ADDR)
+        : "a0", "a1", "memory");
+
+    while (1)
+        ;
 }
 
 static void cmd_uart(void) {
@@ -266,11 +278,15 @@ static void cmd_cat(const char *name) {
 }
 
 void start_kernel(unsigned long hartid, const void *fdt) {
-    (void)hartid;
+    g_boot_hartid = hartid;
+    g_boot_fdt = fdt;
     uart_init_from_dtb(fdt);
     initrd_from_dtb(fdt);
 
     uart_puts("\nNYCU OSC2026 RISC-V Kernel\n");
+    uart_puts("image start_kernel @ ");
+    uart_hex((unsigned long)&start_kernel);
+    uart_putc('\n');
     uart_puts("Type 'help' for available commands.\n\n");
 
     char buf[128];
