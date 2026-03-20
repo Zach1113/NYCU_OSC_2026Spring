@@ -7,9 +7,11 @@
 #define PLATFORM_BOARD
 
 #ifdef PLATFORM_QEMU
-    #define KERNEL_LOAD_ADDR 0x82000000UL
+    #define KERNEL_LOAD_ADDR 0x80200000UL
+    #define RELOC_ADDR       0x80300000UL
 #else
-    #define KERNEL_LOAD_ADDR 0x20000000UL
+    #define KERNEL_LOAD_ADDR 0x00200000UL
+    #define RELOC_ADDR       0x20000000UL
 #endif
 
 #define LOAD_MAGIC         0x544f4f42UL /* "BOOT" in little-endian stream */
@@ -36,6 +38,103 @@ static const void *g_initrd_start;
 static const void *g_initrd_end;
 static unsigned long g_boot_hartid;
 static const void *g_boot_fdt;
+
+void start_kernel(unsigned long hartid, const void *fdt);
+
+extern char _start[];
+extern char _end[];
+
+static unsigned long current_pc(void) {
+    unsigned long pc;
+    asm volatile("auipc %0, 0" : "=r"(pc));
+    return pc;
+}
+
+static int range_overlap(unsigned long s1, unsigned long e1,
+                         unsigned long s2, unsigned long e2) {
+    return (s1 < e2) && (s2 < e1);
+}
+
+static void mem_copy(unsigned char *dst, const unsigned char *src, unsigned long n) {
+    while (n--) {
+        *dst++ = *src++;
+    }
+}
+
+static int relocate_conflicts_with_boot_data(unsigned long dst, unsigned long size,
+                                             const void *fdt) {
+    unsigned long rs = dst;
+    unsigned long re = dst + size;
+    int off;
+    int len_start = 0;
+    int len_end = 0;
+
+    if (fdt) {
+        const struct fdt_header *h = (const struct fdt_header *)fdt;
+        unsigned long fs = (unsigned long)fdt;
+        unsigned long fe = fs + fdt_be32(&h->totalsize);
+        if (range_overlap(rs, re, fs, fe))
+            return 1;
+
+        off = fdt_path_offset(fdt, "/chosen");
+        if (off >= 0) {
+            const void *pstart = fdt_getprop(fdt, off, "linux,initrd-start", &len_start);
+            const void *pend = fdt_getprop(fdt, off, "linux,initrd-end", &len_end);
+            if (pstart && pend) {
+                unsigned long is = (len_start >= 8) ? fdt_be64(pstart) : fdt_be32(pstart);
+                unsigned long ie = (len_end >= 8) ? fdt_be64(pend) : fdt_be32(pend);
+                if (ie > is && range_overlap(rs, re, is, ie))
+                    return 1;
+            }
+        }
+    }
+
+    return 0;
+}
+
+static int ensure_self_relocated_for_load(unsigned long resume_addr,
+                                          unsigned long old_sp,
+                                          const void *fdt) {
+    unsigned long image_start = (unsigned long)_start;
+    unsigned long image_end = (unsigned long)_end;
+    unsigned long image_size = image_end - image_start;
+    unsigned long pc = current_pc();
+    unsigned long resume_reloc;
+    unsigned long sp_reloc;
+
+    /* Already running outside the original linked image. */
+    if (pc < image_start || pc >= image_end)
+        return 1;
+
+    if (resume_addr < image_start || resume_addr >= image_end)
+        return -3;
+
+    /* Never relocate onto the currently running image. */
+    if (range_overlap(RELOC_ADDR, RELOC_ADDR + image_size, image_start, image_end))
+        return -2;
+
+    if (relocate_conflicts_with_boot_data(RELOC_ADDR, image_size, fdt))
+        return -1;
+
+    mem_copy((unsigned char *)RELOC_ADDR, (const unsigned char *)image_start, image_size);
+
+    resume_reloc = RELOC_ADDR + (resume_addr - image_start);
+    if (old_sp >= image_start && old_sp < image_end)
+        sp_reloc = RELOC_ADDR + (old_sp - image_start);
+    else
+        sp_reloc = RELOC_ADDR + image_size;
+
+    asm volatile(
+        "mv sp, %0\n"
+        "fence.i\n"
+        "jr %1\n"
+        :
+        : "r"(sp_reloc), "r"(resume_reloc)
+            : "memory");
+
+    while (1)
+        ;
+}
 
 /*
  *   a7 = extension ID
@@ -158,8 +257,6 @@ static void cmd_help(void) {
     uart_puts("  help   - Show this help message\n");
     uart_puts("  hello  - Print Hello World!\n");
     uart_puts("  info   - Show OpenSBI info\n");
-    uart_puts("  uart   - Show UART base detected at runtime\n");
-    uart_puts("  initrd - Show initrd range from DTB\n");
     uart_puts("  ls     - List files in initramfs cpio\n");
     uart_puts("  cat    - Print file content from initramfs (usage: cat <name>)\n");
     uart_puts("  load   - Load a kernel image over UART and jump to it\n");
@@ -189,6 +286,33 @@ static void cmd_info(void) {
 }
 
 static void cmd_load(void) {
+    int reloc_status;
+    unsigned long sp_now;
+    unsigned long pc;
+
+    unsigned long image_start = (unsigned long)_start;
+    unsigned long image_end = (unsigned long)_end;
+
+    asm volatile("mv %0, sp" : "=r"(sp_now));
+    reloc_status = ensure_self_relocated_for_load((unsigned long)&&after_reloc,
+                                                  sp_now,
+                                                  g_boot_fdt);
+
+after_reloc:
+    pc = current_pc();
+    /* If we resumed in relocated image, ignore pre-jump stack locals. */
+    if (pc < image_start || pc >= image_end)
+        reloc_status = 1;
+
+    if (reloc_status < 0) {
+        if (reloc_status == -2)
+            uart_puts("load: relocation skipped (destination overlaps source image)\n");
+        else
+            uart_puts("load: relocation skipped due to overlap risk\n");
+        return;
+    }
+
+    {
     struct load_header hdr;
     unsigned long sum = 0;
 
@@ -247,25 +371,6 @@ static void cmd_load(void) {
 
     while (1)
         ;
-}
-
-static void cmd_uart(void) {
-    uart_puts("UART base: ");
-    uart_hex(uart_base_addr());
-    uart_putc('\n');
-}
-
-static void cmd_initrd(void) {
-    uart_puts("initrd-start: ");
-    uart_hex((unsigned long)g_initrd_start);
-    uart_putc('\n');
-    uart_puts("initrd-end  : ");
-    uart_hex((unsigned long)g_initrd_end);
-    uart_putc('\n');
-    if (g_initrd_start && g_initrd_end && g_initrd_end > g_initrd_start) {
-        uart_puts("initrd-size : ");
-        uart_hex((unsigned long)g_initrd_end - (unsigned long)g_initrd_start);
-        uart_putc('\n');
     }
 }
 
@@ -281,12 +386,10 @@ void start_kernel(unsigned long hartid, const void *fdt) {
     g_boot_hartid = hartid;
     g_boot_fdt = fdt;
     uart_init_from_dtb(fdt);
+
     initrd_from_dtb(fdt);
 
     uart_puts("\nNYCU OSC2026 RISC-V Kernel\n");
-    uart_puts("image start_kernel @ ");
-    uart_hex((unsigned long)&start_kernel);
-    uart_putc('\n');
     uart_puts("Type 'help' for available commands.\n\n");
 
     char buf[128];
@@ -300,10 +403,6 @@ void start_kernel(unsigned long hartid, const void *fdt) {
             cmd_hello();
         else if (streq(buf, "info"))
             cmd_info();
-        else if (streq(buf, "uart"))
-            cmd_uart();
-        else if (streq(buf, "initrd"))
-            cmd_initrd();
         else if (streq(buf, "ls"))
             cmd_ls();
         else if (starts_with(buf, "cat")) {

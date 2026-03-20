@@ -97,7 +97,7 @@ int fdt_path_offset(const void *fdt, const char *path) {
                 char nm[64];
                 int i;
                 int nm_len = cpy_node_name(nm, sizeof(nm), name);
-                if (!(old_len == 1 && cur[0] == '/')) {
+                if (!(old_len == 1 && cur[0] == '/')) { // not root(/)
                     if (old_len < (int)sizeof(cur) - 1) {
                         cur[old_len++] = '/';
                         cur[old_len] = '\0';

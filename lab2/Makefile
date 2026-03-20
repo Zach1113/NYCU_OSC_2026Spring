@@ -15,12 +15,9 @@ PYTHON   = python3
 SRCDIR   = src/
 
 LDSCRIPT_BOOT    = $(SRCDIR)linker.ld
-LDSCRIPT_PAYLOAD = $(SRCDIR)linker_payload.ld
 
 BOOT_ELF     = $(SRCDIR)kernel_boot.elf
 BOOT_BIN     = kernel_boot.bin
-PAYLOAD_ELF  = $(SRCDIR)kernel_payload.elf
-PAYLOAD_BIN  = kernel_payload.bin
 
 ASMFILES = $(wildcard $(SRCDIR)*.S)
 CFILES   = $(wildcard $(SRCDIR)*.c)
@@ -28,7 +25,7 @@ OBJFILES = $(ASMFILES:.S=.o) $(CFILES:.c=.o)
 
 # --- Build ---
 .PHONY: all
-all: $(BOOT_BIN) $(PAYLOAD_BIN) kernel.bin
+all: $(BOOT_BIN) kernel.bin
 
 $(SRCDIR)%.o: $(SRCDIR)%.S
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -40,12 +37,6 @@ $(BOOT_ELF): $(LDSCRIPT_BOOT) $(OBJFILES)
 	$(LD) -T $(LDSCRIPT_BOOT) $(OBJFILES) -o $@
 
 $(BOOT_BIN): $(BOOT_ELF)
-	$(OBJCOPY) -O binary $< $@
-
-$(PAYLOAD_ELF): $(LDSCRIPT_PAYLOAD) $(OBJFILES)
-	$(LD) -T $(LDSCRIPT_PAYLOAD) $(OBJFILES) -o $@
-
-$(PAYLOAD_BIN): $(PAYLOAD_ELF)
 	$(OBJCOPY) -O binary $< $@
 
 # Keep compatibility with existing workflows expecting kernel.bin.
@@ -93,11 +84,13 @@ debug: $(BOOT_BIN)
 PORT ?= /dev/ttyUSB0
 
 .PHONY: send
-send: $(PAYLOAD_BIN)
-	$(PYTHON) scripts/send_kernel.py $(PORT) $(PAYLOAD_BIN)
+send: $(BOOT_BIN)
+	$(PYTHON) send_kernel.py $(PORT) $(BOOT_BIN)
+
+# Or run sudo python3 send_kernel.py /dev/ttyUSB0 kernel_boot.bin
 
 # --- Clean ---
 .PHONY: clean
 clean:
 	rm -f $(SRCDIR)*.o $(SRCDIR)*.elf
-	rm -f kernel.bin $(BOOT_BIN) $(PAYLOAD_BIN) kernel.fit boot.scr
+	rm -f kernel.bin $(BOOT_BIN) kernel.fit boot.scr
