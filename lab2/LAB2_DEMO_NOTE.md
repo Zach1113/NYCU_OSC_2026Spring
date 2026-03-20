@@ -149,7 +149,7 @@ TA 常問重點：
 - 找到檔名後輸出內容
 - 支援 `./name` 與 `name` 比對
 
-## 7. Advanced: Bootloader Self-Relocation（你這份最關鍵）
+## 7. Advanced: Bootloader Self-Relocation
 
 ### 7.1 為什麼要 relocation
 
@@ -182,7 +182,7 @@ TA 常問重點：
 - 因為程式碼剛被複製到新位址，I-cache 可能仍是舊內容。
 - `fence.i` 保證後續取指看到最新記憶體內容。
 
-## 8. 記憶體配置口試版（建議背）
+## 8. 記憶體配置口試版
 
 - Linker script (`linker.ld`)：bootloader link at `0x00200000`
 - `_start`: 映像起點
@@ -230,7 +230,7 @@ python3 send_kernel.py /dev/ttyUSB0 kernel_boot.bin
 - 收包有 magic/size/checksum 驗證
 - jump 前有 `fence.i`，並保留 `a0/a1`
 
-## 10. 快速口試 QA（精簡版）
+## 10. 快速口試 QA
 
 1. 你怎麼拿到 UART base？
 - 由 `a1` 傳入的 DTB，走 `fdt_path_offset + fdt_getprop` 讀 `/soc/serial` 的 `reg`。
@@ -248,12 +248,7 @@ python3 send_kernel.py /dev/ttyUSB0 kernel_boot.bin
 5. 為什麼 jump kernel 要設 `a0/a1`？
 - 這是 RISC-V boot ABI，kernel 依賴它取得 hartid 與 DTB。
 
-## 11. 現在程式與舊筆記差異提醒
-
-`LAB2_IMPLEMENTATION_NOTES.md` 中有些段落是舊進度（例如曾寫 advanced 未完成）。  
-以目前 `src/main.c` 實際程式為準，你已經實作 self-relocation 與標準位址載入流程。
-
-## 12. Demo 前最終檢查清單
+## 11. Demo 前最終檢查清單
 
 - `load` 前後不會 crash（表示 relocation 可用）
 - `ls` 可列出 `rootfs` 檔案
