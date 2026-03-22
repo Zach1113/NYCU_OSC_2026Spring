@@ -58,6 +58,15 @@ static unsigned long hex_to_u32(const char *s, int n) {
     return v;
 }
 
+static unsigned long dec_width(unsigned long v) {
+    unsigned long width = 1;
+    while (v >= 10) {
+        v /= 10;
+        width++;
+    }
+    return width;
+}
+
 static int cpio_walk_next(const char **cursor,
                           const struct cpio_newc_header **out_hdr,
                           const char **out_name,
@@ -125,6 +134,7 @@ int cpio_ready(void) {
 
 void cpio_ls(void) {
     const char *cursor;
+    unsigned long max_width = 1;
 
     if (!cpio_ready()) {
         uart_puts("ls: initrd not set\n");
@@ -148,8 +158,31 @@ void cpio_ls(void) {
             name[8] == '!' && name[9] == '!')
             break;
 
+        if (dec_width(filesz) > max_width)
+            max_width = dec_width(filesz);
+    }
+
+    cursor = g_rd_start;
+    while (cursor < g_rd_end) {
+        const char *name;
+        unsigned long namesz;
+        unsigned long filesz;
+
+        if (!cpio_walk_next(&cursor, 0, &name, 0, &namesz, &filesz)) {
+            uart_puts("ls: invalid cpio archive\n");
+            return;
+        }
+
+        if (namesz >= 11 &&
+            name[0] == 'T' && name[1] == 'R' && name[2] == 'A' && name[3] == 'I' &&
+            name[4] == 'L' && name[5] == 'E' && name[6] == 'R' && name[7] == '!' &&
+            name[8] == '!' && name[9] == '!')
+            break;
+
         uart_dec(filesz);
-        uart_puts(" ");
+        for (unsigned long i = dec_width(filesz); i < max_width; i++)
+            uart_putc(' ');
+        uart_puts("  ");
         uart_puts(name);
         uart_putc('\n');
     }
