@@ -5,8 +5,8 @@
 
     images {
         kernel {
-            description = "Kernel Image";
-            data = /incbin/("kernel.bin");
+            description = "Bootloader Image";
+            data = /incbin/("boot.bin");
             type = "kernel";
             arch = "riscv";
             os = "linux";
