@@ -4,8 +4,8 @@
  */
 
 /* ---- Platform selection ---- */
-#define PLATFORM_QEMU
-/*#define PLATFORM_BOARD */  /* OrangePi RV2 */
+// #define PLATFORM_QEMU
+#define PLATFORM_BOARD  /* OrangePi RV2 */
 
 #ifdef PLATFORM_QEMU
   #define UART_BASE  0x10000000UL

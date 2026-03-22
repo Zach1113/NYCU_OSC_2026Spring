@@ -36,6 +36,6 @@ sudo sync
 sudo umount "$MOUNT_POINT"
 
 echo "------------------------------------------------"
-echo "✅ Success! kernel.fit copied to SD card."
+echo "Success! kernel.fit copied to SD card."
 echo "You can now safely remove the card reader."
 echo "------------------------------------------------"

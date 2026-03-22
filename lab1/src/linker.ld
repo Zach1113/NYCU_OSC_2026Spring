@@ -1,6 +1,6 @@
 SECTIONS
 {
-    . = 0x80200000; /* 0x80200000 for QEMU and 0x00200000 for OrangePi */
+    . = 0x00200000; /* 0x80200000 for QEMU and 0x00200000 for OrangePi */
     _start = .;
 
     .text : {
