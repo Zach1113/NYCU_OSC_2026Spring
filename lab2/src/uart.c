@@ -4,6 +4,7 @@
  */
 
 #include "fdt.h"
+#include "uart.h"
 
 /* ---- Platform selection ---- */
 // #define PLATFORM_QEMU
@@ -86,6 +87,24 @@ char uart_getc_raw(void) {
     while ((uart_read_reg(uart_lsr_off()) & LSR_DR) == 0)
         ;
     return (char)(uart_read_reg(uart_data_off()) & 0xFF);
+}
+
+unsigned long uart_get_u32_le(void) {
+    unsigned long b0 = (unsigned char)uart_getc_raw();
+    unsigned long b1 = (unsigned char)uart_getc_raw();
+    unsigned long b2 = (unsigned char)uart_getc_raw();
+    unsigned long b3 = (unsigned char)uart_getc_raw();
+    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+}
+
+void uart_read_exact(void *dst, unsigned long n, unsigned long *sum) {
+    unsigned char *p = (unsigned char *)dst;
+    while (n--) {
+        unsigned char v = (unsigned char)uart_getc_raw();
+        *p++ = v;
+        if (sum)
+            *sum += v;
+    }
 }
 
 /* Read one character (blocking) */

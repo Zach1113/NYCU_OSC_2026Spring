@@ -108,24 +108,6 @@ static int ensure_self_relocated_for_load(unsigned long resume_addr,
         ;
 }
 
-static unsigned long uart_get_u32_le(void) {
-    unsigned long b0 = (unsigned char)uart_getc_raw();
-    unsigned long b1 = (unsigned char)uart_getc_raw();
-    unsigned long b2 = (unsigned char)uart_getc_raw();
-    unsigned long b3 = (unsigned char)uart_getc_raw();
-    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
-}
-
-static void uart_read_exact(void *dst, unsigned long n, unsigned long *sum) {
-    unsigned char *p = (unsigned char *)dst;
-    while (n--) {
-        unsigned char v = (unsigned char)uart_getc_raw();
-        *p++ = v;
-        if (sum)
-            *sum += v;
-    }
-}
-
 static void readline(char *buf, int max) {
     int i = 0;
     while (i < max - 1) {
