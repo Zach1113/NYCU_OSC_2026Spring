@@ -135,6 +135,7 @@ int cpio_ready(void) {
 void cpio_ls(void) {
     const char *cursor;
     unsigned long max_width = 1;
+    unsigned long file_count = 0;
 
     if (!cpio_ready()) {
         uart_puts("ls: initrd not set\n");
@@ -160,7 +161,11 @@ void cpio_ls(void) {
 
         if (dec_width(filesz) > max_width)
             max_width = dec_width(filesz);
+        file_count++;
     }
+    uart_puts("Total ");
+    uart_dec(file_count);
+    uart_puts(" files.\n");
 
     cursor = g_rd_start;
     while (cursor < g_rd_end) {
