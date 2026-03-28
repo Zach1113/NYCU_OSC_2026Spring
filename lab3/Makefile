@@ -35,7 +35,7 @@ BOOT_OBJFILES = $(BOOT_ASMFILES:.S=.o) \
 
 KERNEL_ASMFILES = $(wildcard $(KERNELDIR)/*.S)
 KERNEL_CFILES   = $(wildcard $(KERNELDIR)/*.c)
-KERNEL_SHARED_CFILES = $(SRCDIR)/uart.c $(SRCDIR)/fdt.c $(SRCDIR)/cpio.c
+KERNEL_SHARED_CFILES = $(SRCDIR)/uart.c $(SRCDIR)/fdt.c $(SRCDIR)/cpio.c $(SRCDIR)/mm.c
 KERNEL_OBJFILES = $(KERNEL_ASMFILES:.S=.o) \
                   $(KERNEL_CFILES:.c=.o) \
                   $(KERNEL_SHARED_CFILES:.c=.o)

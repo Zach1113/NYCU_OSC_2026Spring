@@ -1,6 +1,7 @@
 #include "fdt.h"
 #include "cpio.h"
 #include "uart.h"
+#include "mm.h"
 
 #define SBI_EXT_BASE  0x10
 
@@ -123,6 +124,8 @@ static void cmd_help(void) {
     uart_puts("  info   - Show OpenSBI info\n");
     uart_puts("  ls     - List files in initramfs cpio\n");
     uart_puts("  cat    - Print file content from initramfs (usage: cat <name>)\n");
+    uart_puts("  mtest  - Run memory allocator self-test\n");
+    uart_puts("  mlog   - Set allocator verbose log (usage: mlog on|off)\n");
 }
 
 static void cmd_hello(void) {
@@ -156,11 +159,28 @@ static void cmd_cat(const char *name) {
     cpio_cat(name);
 }
 
+static void cmd_mtest(void) {
+    mm_self_test();
+}
+
+static void cmd_mlog(const char *arg) {
+    if (!arg || streq(arg, "on")) {
+        mm_set_log_enabled(1);
+        return;
+    }
+    if (streq(arg, "off")) {
+        mm_set_log_enabled(0);
+        return;
+    }
+    uart_puts("Usage: mlog on|off\n");
+}
+
 void start_kernel(unsigned long hartid, const void *fdt) {
     (void)hartid;
     uart_init_from_dtb(fdt);
 
     initrd_from_dtb(fdt);
+    mm_init();
 
     uart_puts("\nNYCU OSC2026 RISC-V Kernel\n");
     uart_puts("Type 'help' for available commands.\n\n");
@@ -178,6 +198,14 @@ void start_kernel(unsigned long hartid, const void *fdt) {
             cmd_info();
         else if (streq(buf, "ls"))
             cmd_ls();
+        else if (streq(buf, "mtest"))
+            cmd_mtest();
+        else if (starts_with(buf, "mlog")) {
+            char *arg = buf + 4;
+            while (*arg == ' ')
+                arg++;
+            cmd_mlog(*arg ? arg : 0);
+        }
         else if (starts_with(buf, "cat")) {
             char *arg = buf + 3;
             while (*arg == ' ')
