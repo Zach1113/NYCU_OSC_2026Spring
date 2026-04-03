@@ -180,7 +180,7 @@ void start_kernel(unsigned long hartid, const void *fdt) {
     uart_init_from_dtb(fdt);
 
     initrd_from_dtb(fdt);
-    mm_init();
+    mm_init(fdt);
 
     uart_puts("\nNYCU OSC2026 RISC-V Kernel\n");
     uart_puts("Type 'help' for available commands.\n\n");

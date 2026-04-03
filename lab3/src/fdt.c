@@ -18,6 +18,36 @@ static const char *align4(const char *p) {
     return (const char *)x;
 }
 
+static int reg_entry_count(const void *prop, int len) {
+    if (!prop || len <= 0)
+        return 0;
+    if ((len % 16) == 0)
+        return len / 16;
+    if ((len % 8) == 0)
+        return len / 8;
+    return 0;
+}
+
+static unsigned long reg_read_addr_size(const void *prop, int len, int entry, int want_size) {
+    const unsigned char *p = (const unsigned char *)prop;
+    int stride;
+    int off;
+
+    if ((len % 16) == 0)
+        stride = 16;
+    else if ((len % 8) == 0)
+        stride = 8;
+    else
+        return 0;
+
+    off = entry * stride + (want_size ? stride / 2 : 0);
+    if (off + stride / 2 > len)
+        return 0;
+    if (stride == 16)
+        return fdt_be64(p + off);
+    return (unsigned long)fdt_be32(p + off);
+}
+
 static int streq(const char *a, const char *b) {
     while (*a && *b && *a == *b) {
         a++;
@@ -221,6 +251,124 @@ const void *fdt_getprop(const void *fdt, int nodeoffset, const char *name, int *
                 break;
             depth--;
             p += 4;
+            continue;
+        }
+
+        if (token == FDT_NOP) {
+            p += 4;
+            continue;
+        }
+
+        if (token == FDT_END)
+            break;
+
+        return 0;
+    }
+
+    return 0;
+}
+
+int fdt_get_memory_region(const void *fdt, int entry,
+                          unsigned long *base, unsigned long *size) {
+    int off;
+    int len = 0;
+    const void *reg;
+    int count;
+
+    if (!base || !size || entry < 0)
+        return 0;
+
+    off = fdt_path_offset(fdt, "/memory");
+    if (off < 0)
+        return 0;
+
+    reg = fdt_getprop(fdt, off, "reg", &len);
+    count = reg_entry_count(reg, len);
+    if (entry >= count)
+        return 0;
+
+    *base = reg_read_addr_size(reg, len, entry, 0);
+    *size = reg_read_addr_size(reg, len, entry, 1);
+    return *size != 0;
+}
+
+int fdt_get_reserved_memory_region(const void *fdt, int entry,
+                                   unsigned long *base, unsigned long *size) {
+    const struct fdt_header *h = (const struct fdt_header *)fdt;
+    const char *sb;
+    const char *p;
+    const char *end;
+    int off;
+    int depth = 0;
+    int seen = 0;
+
+    if (!fdt || !base || !size || entry < 0)
+        return 0;
+    if (fdt_be32(&h->magic) != FDT_MAGIC)
+        return 0;
+
+    off = fdt_path_offset(fdt, "/reserved-memory");
+    if (off < 0)
+        return 0;
+
+    sb = fdt_struct_base(fdt);
+    p = sb + off;
+    end = sb + fdt_be32(&h->size_dt_struct);
+    if (p + 4 > end || fdt_be32(p) != FDT_BEGIN_NODE)
+        return 0;
+
+    p += 4;
+    while (p < end && *p)
+        p++;
+    p = align4(p + 1);
+
+    while (p + 4 <= end) {
+        unsigned int token = fdt_be32(p);
+
+        if (token == FDT_BEGIN_NODE) {
+            int child_off = (int)(p - sb);
+            const char *name = p + 4;
+
+            if (depth == 0) {
+                int len = 0;
+                const void *reg = fdt_getprop(fdt, child_off, "reg", &len);
+                int count = reg_entry_count(reg, len);
+                int i;
+
+                for (i = 0; i < count; i++) {
+                    if (seen == entry) {
+                        *base = reg_read_addr_size(reg, len, i, 0);
+                        *size = reg_read_addr_size(reg, len, i, 1);
+                        return *size != 0;
+                    }
+                    seen++;
+                }
+            }
+
+            depth++;
+            while (name < end && *name)
+                name++;
+            p = align4(name + 1);
+            continue;
+        }
+
+        if (token == FDT_END_NODE) {
+            if (depth == 0)
+                break;
+            depth--;
+            p += 4;
+            continue;
+        }
+
+        if (token == FDT_PROP) {
+            unsigned int len;
+
+            p += 4;
+            if (p + 8 > end)
+                return 0;
+            len = fdt_be32(p);
+            p += 8;
+            p = align4(p + len);
             continue;
         }
 

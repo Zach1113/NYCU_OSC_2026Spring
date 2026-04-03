@@ -1,12 +1,12 @@
 #include "uart.h"
 #include "mm.h"
 #include "list.h"
+#include "fdt.h"
 
 #define PAGE_SIZE   4096UL
 #define MAX_ORDER   10
-#define MM_BASE     0x10000000UL
-#define MM_SIZE     (64UL * 1024UL * 1024UL)
-#define NUM_PAGES   (MM_SIZE / PAGE_SIZE)
+#define MAX_MANAGED_SIZE (64UL * 1024UL * 1024UL)
+#define MAX_MANAGED_PAGES (MAX_MANAGED_SIZE / PAGE_SIZE)
 #define MAX_ALLOC_SIZE (PAGE_SIZE * (1UL << MAX_ORDER))
 
 #define FRAME_FREE_HEAD  1U
@@ -14,6 +14,8 @@
 #define FRAME_ALLOC_HEAD 3U
 #define FRAME_ALLOC_TAIL 4U
 #define FRAME_CHUNK_PAGE 5U
+#define FRAME_RESERVED_HEAD 6U
+#define FRAME_RESERVED_TAIL 7U
 
 #define INVALID_POOL_ID  0xFFFFU
 #define POOL_COUNT       8
@@ -38,14 +40,32 @@ struct frame {
     struct list_head node;
 };
 
-static struct frame g_frames[NUM_PAGES];
+struct reserve_region {
+    unsigned long start;
+    unsigned long end;
+};
+
+static struct frame *g_frames;
 static struct list_head g_free_area[MAX_ORDER + 1];
 static struct chunk_pool g_pools[POOL_COUNT];
 static int g_mm_ready;
 static int g_mm_log_enabled = 1;
 static int g_chunk_log_enabled = 1;
+static unsigned long g_mm_base;
+static unsigned long g_mm_size;
+static unsigned long g_num_pages;
+static unsigned long g_frame_array_bytes;
+static unsigned long g_startup_cur;
+static unsigned long g_startup_end;
+
+#define MAX_RESERVED_REGIONS 64
+static struct reserve_region g_reserved_regions[MAX_RESERVED_REGIONS];
+static int g_reserved_region_count;
 
 static unsigned long idx_to_pa(unsigned long idx);
+
+extern char _start[];
+extern char _end[];
 
 static void log_add_block(unsigned long idx, int order) {
     if (!g_mm_log_enabled)
@@ -127,12 +147,28 @@ static void log_chunk_free(unsigned long pa, unsigned long chunk_size) {
 }
 
 static void log_chunk_refill(unsigned long page_pa, unsigned long chunk_size) {
-
+    if (!g_chunk_log_enabled)
+        return;
     uart_puts("[Chunk] Refill pool size ");
     uart_dec(chunk_size);
     uart_puts(" from page ");
     uart_hex(page_pa);
     uart_putc('\n');
+}
+
+static void log_reserve_range(unsigned long start, unsigned long end,
+                              unsigned long start_idx, unsigned long end_idx) {
+    if (!g_mm_log_enabled)
+        return;
+    uart_puts("[Reserve] Reserve address [");
+    uart_hex(start);
+    uart_puts(", ");
+    uart_hex(end);
+    uart_puts("). Range of pages: [");
+    uart_dec(start_idx);
+    uart_puts(", ");
+    uart_dec(end_idx);
+    uart_puts(")\n");
 }
 
 static unsigned long next_addr_at_order(int order) {
@@ -150,15 +186,17 @@ static unsigned long next_addr_at_order(int order) {
 }
 
 static unsigned long idx_to_pa(unsigned long idx) {
-    return MM_BASE + idx * PAGE_SIZE;
+    return g_mm_base + idx * PAGE_SIZE;
 }
 
 static unsigned long pa_to_idx(unsigned long pa) {
-    return (pa - MM_BASE) / PAGE_SIZE;
+    return (pa - g_mm_base) / PAGE_SIZE;
 }
 
 static int in_range_pa(unsigned long pa) {
-    return (pa >= MM_BASE) && (pa < MM_BASE + MM_SIZE);
+    return g_mm_size != 0 &&
+           pa >= g_mm_base &&
+           pa < g_mm_base + g_mm_size;
 }
 
 static void mark_tail(unsigned long idx, int order, unsigned short state) {
@@ -191,6 +229,22 @@ static void mark_chunk_page(unsigned long idx, unsigned short pool_id) {
     g_frames[idx].pool_id = pool_id;
 }
 
+static void mark_reserved_range(unsigned long start_idx, unsigned long end_idx) {
+    unsigned long i;
+
+    if (start_idx >= end_idx || end_idx > g_num_pages)
+        return;
+
+    g_frames[start_idx].order = -1;
+    g_frames[start_idx].state = FRAME_RESERVED_HEAD;
+    g_frames[start_idx].pool_id = INVALID_POOL_ID;
+    for (i = start_idx + 1; i < end_idx; i++) {
+        g_frames[i].order = -1;
+        g_frames[i].state = FRAME_RESERVED_TAIL;
+        g_frames[i].pool_id = INVALID_POOL_ID;
+    }
+}
+
 static void add_free_block(unsigned long idx, int order) {
     block_set_free_head(idx, order);
     list_add(&g_frames[idx].node, &g_free_area[order]);
@@ -213,7 +267,7 @@ static int ceil_order_pages(unsigned long pages) {
 }
 
 static int can_merge(unsigned long idx, int order) {
-    if (idx >= NUM_PAGES)
+    if (idx >= g_num_pages)
         return 0;
     return g_frames[idx].state == FRAME_FREE_HEAD && g_frames[idx].order == order;
 }
@@ -253,7 +307,7 @@ static void buddy_free_idx(unsigned long *idx_io, int *order_io) {
 
     while (order < MAX_ORDER) {
         unsigned long buddy = idx ^ (1UL << order);
-        if (buddy >= NUM_PAGES) {
+        if (buddy >= g_num_pages) {
             log_buddy(idx, buddy, order, 0);
             break;
         }
@@ -281,6 +335,268 @@ static int pick_pool_id(unsigned long size) {
             return i;
     }
     return -1;
+}
+
+static int frame_is_reserved(unsigned long idx) {
+    unsigned short state;
+
+    if (idx >= g_num_pages)
+        return 1;
+    state = g_frames[idx].state;
+    return state == FRAME_RESERVED_HEAD || state == FRAME_RESERVED_TAIL;
+}
+
+static unsigned long align_up(unsigned long value, unsigned long align) {
+    if (align == 0)
+        return value;
+    return (value + align - 1UL) & ~(align - 1UL);
+}
+
+static void clip_range_to_managed(unsigned long start, unsigned long size,
+                                  unsigned long *clip_start,
+                                  unsigned long *clip_end) {
+    unsigned long end = start + size;
+
+    if (end < start)
+        end = ~0UL;
+
+    *clip_start = start;
+    if (*clip_start < g_mm_base)
+        *clip_start = g_mm_base;
+
+    *clip_end = end;
+    if (*clip_end > g_mm_base + g_mm_size)
+        *clip_end = g_mm_base + g_mm_size;
+}
+
+static void record_reserved_range(unsigned long start, unsigned long size) {
+    unsigned long clip_start;
+    unsigned long clip_end;
+
+    if (g_reserved_region_count >= MAX_RESERVED_REGIONS || size == 0)
+        return;
+
+    clip_range_to_managed(start, size, &clip_start, &clip_end);
+    if (clip_start >= clip_end)
+        return;
+
+    clip_start &= ~(PAGE_SIZE - 1UL);
+    clip_end = align_up(clip_end, PAGE_SIZE);
+    if (clip_end > g_mm_base + g_mm_size)
+        clip_end = g_mm_base + g_mm_size;
+    if (clip_start >= clip_end)
+        return;
+
+    g_reserved_regions[g_reserved_region_count].start = clip_start;
+    g_reserved_regions[g_reserved_region_count].end = clip_end;
+    g_reserved_region_count++;
+}
+
+static int startup_find_conflict(unsigned long start, unsigned long end,
+                                 unsigned long *next_start) {
+    int i;
+    int found = 0;
+    unsigned long candidate = start;
+
+    for (i = 0; i < g_reserved_region_count; i++) {
+        unsigned long res_start = g_reserved_regions[i].start;
+        unsigned long res_end = g_reserved_regions[i].end;
+
+        if (end <= res_start || start >= res_end)
+            continue;
+        if (!found || res_end > candidate)
+            candidate = res_end;
+        found = 1;
+    }
+
+    if (found)
+        *next_start = candidate;
+    return found;
+}
+
+static unsigned long startup_alloc(unsigned long size, unsigned long align) {
+    unsigned long start;
+    unsigned long end;
+    unsigned long next_start;
+
+    if (size == 0)
+        return 0;
+
+    for (;;) {
+        start = align_up(g_startup_cur, align);
+        end = start + size;
+        if (end < start || end > g_startup_end)
+            return (unsigned long)-1;
+        if (!startup_find_conflict(start, end, &next_start)) {
+            g_startup_cur = end;
+            return start;
+        }
+        g_startup_cur = next_start;
+    }
+}
+
+static int startup_alloc_frame_array(void) {
+    unsigned long frame_array_pa;
+
+    g_frame_array_bytes = align_up(g_num_pages * sizeof(struct frame), PAGE_SIZE);
+    g_startup_cur = g_mm_base;
+    g_startup_end = g_mm_base + g_mm_size;
+
+    frame_array_pa = startup_alloc(g_frame_array_bytes, PAGE_SIZE);
+    if (frame_array_pa == (unsigned long)-1)
+        return 0;
+
+    g_frames = (struct frame *)frame_array_pa;
+    record_reserved_range(frame_array_pa, g_frame_array_bytes);
+    return 1;
+}
+
+static void reserve_memory(unsigned long start, unsigned long size) {
+    unsigned long clip_start;
+    unsigned long clip_end;
+    unsigned long start_idx;
+    unsigned long end_idx;
+
+    if (!g_num_pages || size == 0)
+        return;
+
+    clip_range_to_managed(start, size, &clip_start, &clip_end);
+
+    if (clip_start >= clip_end)
+        return;
+
+    clip_start &= ~(PAGE_SIZE - 1UL);
+    clip_end = align_up(clip_end, PAGE_SIZE);
+    if (clip_end > g_mm_base + g_mm_size)
+        clip_end = g_mm_base + g_mm_size;
+    if (clip_start >= clip_end)
+        return;
+
+    start_idx = pa_to_idx(clip_start);
+    end_idx = pa_to_idx(clip_end);
+    if (end_idx > g_num_pages)
+        end_idx = g_num_pages;
+    if (start_idx >= end_idx)
+        return;
+
+    mark_reserved_range(start_idx, end_idx);
+    log_reserve_range(clip_start, clip_end, start_idx, end_idx);
+}
+
+static int init_memory_region_from_fdt(const void *fdt) {
+    unsigned long base;
+    unsigned long size;
+
+    if (!fdt_get_memory_region(fdt, 0, &base, &size))
+        return 0;
+
+    if (size > MAX_MANAGED_SIZE)
+        size = MAX_MANAGED_SIZE;
+    size &= ~(PAGE_SIZE - 1UL);
+    if (size == 0)
+        return 0;
+
+    g_mm_base = base;
+    g_mm_size = size;
+    g_num_pages = size / PAGE_SIZE;
+    return 1;
+}
+
+static void reserve_fdt_blob(const void *fdt) {
+    const struct fdt_header *h;
+
+    if (!fdt)
+        return;
+    h = (const struct fdt_header *)fdt;
+    record_reserved_range((unsigned long)fdt, fdt_be32(&h->totalsize));
+}
+
+static void reserve_kernel_image(void) {
+    unsigned long start = (unsigned long)_start;
+    unsigned long end = (unsigned long)_end;
+
+    if (end > start)
+        record_reserved_range(start, end - start);
+}
+
+static void reserve_initrd_from_fdt(const void *fdt) {
+    int off;
+    int len_start = 0;
+    int len_end = 0;
+    const void *pstart;
+    const void *pend;
+    unsigned long start;
+    unsigned long end;
+
+    if (!fdt)
+        return;
+
+    off = fdt_path_offset(fdt, "/chosen");
+    if (off < 0)
+        return;
+
+    pstart = fdt_getprop(fdt, off, "linux,initrd-start", &len_start);
+    pend = fdt_getprop(fdt, off, "linux,initrd-end", &len_end);
+    if (!pstart || !pend)
+        return;
+
+    start = (len_start >= 8) ? fdt_be64(pstart) : fdt_be32(pstart);
+    end = (len_end >= 8) ? fdt_be64(pend) : fdt_be32(pend);
+    if (end > start)
+        record_reserved_range(start, end - start);
+}
+
+static void reserve_reserved_memory_children(const void *fdt) {
+    int entry = 0;
+    unsigned long base;
+    unsigned long size;
+
+    while (fdt_get_reserved_memory_region(fdt, entry, &base, &size)) {
+        record_reserved_range(base, size);
+        entry++;
+    }
+}
+
+static void apply_reserved_ranges(void) {
+    int i;
+
+    for (i = 0; i < g_reserved_region_count; i++) {
+        unsigned long start = g_reserved_regions[i].start;
+        unsigned long end = g_reserved_regions[i].end;
+
+        reserve_memory(start, end - start);
+    }
+}
+
+static void build_initial_free_lists(void) {
+    unsigned long i = 0;
+
+    while (i < g_num_pages) {
+        unsigned long run_start;
+        unsigned long remain;
+        int order;
+
+        while (i < g_num_pages && frame_is_reserved(i))
+            i++;
+        if (i >= g_num_pages)
+            break;
+
+        run_start = i;
+        while (i < g_num_pages && !frame_is_reserved(i))
+            i++;
+        remain = i - run_start;
+
+        while (remain > 0) {
+            order = MAX_ORDER;
+            while (order > 0 && ((run_start & ((1UL << order) - 1UL)) != 0))
+                order--;
+            while ((1UL << order) > remain)
+                order--;
+            add_free_block(run_start, order);
+            run_start += (1UL << order);
+            remain -= (1UL << order);
+        }
+    }
 }
 
 static void pool_push_chunk(int pool_id, void *ptr) {
@@ -344,7 +660,7 @@ static int chunk_free_ptr(unsigned long pa) {
     if (!in_range_pa(base_pa))
         return 0;
     idx = pa_to_idx(base_pa);
-    if (idx >= NUM_PAGES || g_frames[idx].state != FRAME_CHUNK_PAGE)
+    if (idx >= g_num_pages || g_frames[idx].state != FRAME_CHUNK_PAGE)
         return 0;
 
     pool_id = g_frames[idx].pool_id;
@@ -361,42 +677,62 @@ static int chunk_free_ptr(unsigned long pa) {
     return 1;
 }
 
-void mm_init(void) {
+void mm_init(const void *fdt) {
     unsigned long i = 0;
     int order;
 
+    g_mm_ready = 0;
+    g_frames = 0;
+    g_mm_base = 0;
+    g_mm_size = 0;
+    g_num_pages = 0;
+    g_frame_array_bytes = 0;
+    g_startup_cur = 0;
+    g_startup_end = 0;
+    g_reserved_region_count = 0;
+
     for (order = 0; order <= MAX_ORDER; order++)
         list_init(&g_free_area[order]);
-
-    for (i = 0; i < NUM_PAGES; i++) {
-        g_frames[i].order = -1;
-        g_frames[i].state = FRAME_ALLOC_TAIL;
-        g_frames[i].pool_id = INVALID_POOL_ID;
-        list_init(&g_frames[i].node);
-    }
 
     for (i = 0; i < POOL_COUNT; i++) {
         g_pools[i].chunk_size = g_pool_sizes[i];
         g_pools[i].free_list = 0;
     }
 
-    i = 0;
-    while (i < NUM_PAGES) {
-        unsigned long remain = NUM_PAGES - i;
-        order = MAX_ORDER;
-        while (order > 0 && ((i & ((1UL << order) - 1UL)) != 0))
-            order--;
-        while ((1UL << order) > remain)
-            order--;
-        add_free_block(i, order);
-        i += (1UL << order);
+    if (!init_memory_region_from_fdt(fdt)) {
+        uart_puts("[MM] Failed to parse /memory from DTB\n");
+        return;
     }
 
+    reserve_fdt_blob(fdt);
+    reserve_kernel_image();
+    reserve_initrd_from_fdt(fdt);
+    reserve_reserved_memory_children(fdt);
+
+    if (!startup_alloc_frame_array()) {
+        uart_puts("[MM] Failed to allocate frame array during startup\n");
+        return;
+    }
+
+    for (i = 0; i < g_num_pages; i++) {
+        g_frames[i].order = -1;
+        g_frames[i].state = FRAME_ALLOC_TAIL;
+        g_frames[i].pool_id = INVALID_POOL_ID;
+        list_init(&g_frames[i].node);
+    }
+
+    apply_reserved_ranges();
+    build_initial_free_lists();
+
     g_mm_ready = 1;
-    uart_puts("[MM] Buddy allocator initialized. Base=");
-    uart_hex(MM_BASE);
+    uart_puts("[MM] Buddy allocator initialized from DTB. Base=");
+    uart_hex(g_mm_base);
     uart_puts(" Size=");
-    uart_hex(MM_SIZE);
+    uart_hex(g_mm_size);
+    uart_puts(" FrameArray=");
+    uart_hex((unsigned long)g_frames);
+    uart_puts(" Bytes=");
+    uart_hex(g_frame_array_bytes);
     uart_putc('\n');
 }
 
@@ -473,7 +809,7 @@ void free(void *ptr) {
     }
 
     idx = pa_to_idx(pa);
-    if (idx >= NUM_PAGES || g_frames[idx].state != FRAME_ALLOC_HEAD) {
+    if (idx >= g_num_pages || g_frames[idx].state != FRAME_ALLOC_HEAD) {
         if (!g_mm_log_enabled)
             return;
         uart_puts("[Page] Free ignore non-head ptr ");

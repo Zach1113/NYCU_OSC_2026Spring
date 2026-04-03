@@ -1,7 +1,7 @@
 #ifndef KERNEL_MM_H
 #define KERNEL_MM_H
 
-void mm_init(void);
+void mm_init(const void *fdt);
 void *alloc(unsigned long size);
 void free(void *ptr);
 void mm_dump_free_areas(void);
