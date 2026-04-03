@@ -3,7 +3,7 @@
 #include "list.h"
 
 #define PAGE_SIZE   4096UL
-#define MAX_ORDER   12
+#define MAX_ORDER   10
 #define MM_BASE     0x10000000UL
 #define MM_SIZE     (64UL * 1024UL * 1024UL)
 #define NUM_PAGES   (MM_SIZE / PAGE_SIZE)
@@ -42,8 +42,8 @@ static struct frame g_frames[NUM_PAGES];
 static struct list_head g_free_area[MAX_ORDER + 1];
 static struct chunk_pool g_pools[POOL_COUNT];
 static int g_mm_ready;
-static int g_mm_log_enabled = 0;
-static int g_chunk_log_enabled = 0;
+static int g_mm_log_enabled = 1;
+static int g_chunk_log_enabled = 1;
 
 static unsigned long idx_to_pa(unsigned long idx);
 
@@ -127,8 +127,7 @@ static void log_chunk_free(unsigned long pa, unsigned long chunk_size) {
 }
 
 static void log_chunk_refill(unsigned long page_pa, unsigned long chunk_size) {
-    if (!g_chunk_log_enabled)
-        return;
+
     uart_puts("[Chunk] Refill pool size ");
     uart_dec(chunk_size);
     uart_puts(" from page ");
@@ -534,6 +533,8 @@ void mm_self_test(void) {
     int i;
 
     uart_puts("[MMTEST] start\n");
+    uart_puts("[MMTEST] initial free areas\n");
+    mm_dump_free_areas();
     uart_puts("Testing memory allocation...\n");
     ptr1 = (char *)alloc(4000);
     ptr2 = (char *)alloc(8000);
@@ -581,6 +582,7 @@ void mm_self_test(void) {
 
 void mm_set_log_enabled(int enabled) {
     g_mm_log_enabled = enabled ? 1 : 0;
+    g_chunk_log_enabled = g_mm_log_enabled;
     uart_puts("[MM] verbose log ");
     uart_puts(g_mm_log_enabled ? "on\n" : "off\n");
 }
