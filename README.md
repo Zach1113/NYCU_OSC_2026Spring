@@ -47,15 +47,32 @@ In Lab 2, you’ll implement a bootloader for the OrangePi RV2 that loads kernel
 ## Lab 3: Memory Allocator
 
 ### Introduction
+A kernel allocates physical memory for maintaining its internal states and user programs’ use. Without memory allocators, you need to statically partition the physical memory into several memory pools for different objects. It’s sufficient for some systems that run known applications on known devices. Yet, general-purpose operating systems that run diverse applications on diverse devices determine the use and amount of physical memory at runtime. On OrangePi RV2, available physical memory and reserved regions are described by the Device Tree, so you must read those descriptions at boot.
+
+In Lab 3, you need to implement memory allocators that rely on OrangePi RV2’s Device Tree for memory layout. They’ll be used in all later labs.
 
 ### Goals
+- Implement a Page Frame Allocator.
+- Implement a Dynamic Memory Allocator that requests pages from the previous Page Frame Allocator and partitions pages into chunk pools.
+- Implement a Startup Allocator (bump-pointer).
 ---
 
 ## Lab 4: Exception and Interrupt
 
 ### Introduction
+An exception is an event that causes the currently executing program to relinquish the CPU to the corresponding handler. With the exception mechanism, an operating system can
+
+1. handle errors properly during execution,
+2. allow user programs to request system services,
+3. respond to peripheral devices that require immediate attention.
+
 
 ### Goals
+- Understand the exception mechanism in RISC-V.
+- Understand how interrupt delegation works in the OrangePi RV2 platform.
+- Configure and handle core timer interrupts using the SBI Timer Extension.
+- Understand and handle UART interrupts via the PLIC.
+- Learn how to multiplex timers and schedule asynchronous tasks.
 ---
 
 ## Lab 5: Thread and User Process
