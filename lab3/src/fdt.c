@@ -385,3 +385,28 @@ int fdt_get_reserved_memory_region(const void *fdt, int entry,
 
     return 0;
 }
+
+int fdt_get_initrd_region(const void *fdt,
+                          unsigned long *start, unsigned long *end) {
+    int off;
+    int len_start = 0;
+    int len_end = 0;
+    const void *pstart;
+    const void *pend;
+
+    if (!fdt || !start || !end)
+        return 0;
+
+    off = fdt_path_offset(fdt, "/chosen");
+    if (off < 0)
+        return 0;
+
+    pstart = fdt_getprop(fdt, off, "linux,initrd-start", &len_start);
+    pend = fdt_getprop(fdt, off, "linux,initrd-end", &len_end);
+    if (!pstart || !pend)
+        return 0;
+
+    *start = (len_start >= 8) ? fdt_be64(pstart) : fdt_be32(pstart);
+    *end = (len_end >= 8) ? fdt_be64(pend) : fdt_be32(pend);
+    return *end > *start;
+}

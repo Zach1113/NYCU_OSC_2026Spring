@@ -1,4 +1,5 @@
 #include "cpio.h"
+#include "fdt.h"
 #include "uart.h"
 
 struct cpio_newc_header {
@@ -126,6 +127,19 @@ static int cpio_walk_next(const char **cursor,
 void cpio_set_archive(const void *start, const void *end) {
     g_rd_start = (const char *)start;
     g_rd_end = (const char *)end;
+}
+
+void cpio_init_from_dtb(const void *fdt) {
+    unsigned long start;
+    unsigned long end;
+
+    g_rd_start = 0;
+    g_rd_end = 0;
+
+    if (!fdt_get_initrd_region(fdt, &start, &end))
+        return;
+
+    cpio_set_archive((const void *)start, (const void *)end);
 }
 
 int cpio_ready(void) {

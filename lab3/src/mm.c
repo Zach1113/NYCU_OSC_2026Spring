@@ -272,11 +272,13 @@ static int can_merge(unsigned long idx, int order) {
     return g_frames[idx].state == FRAME_FREE_HEAD && g_frames[idx].order == order;
 }
 
+// Buddy System Allocator
 static unsigned long buddy_alloc_order(int req_order) {
     int cur;
     unsigned long idx;
     struct list_head *n;
 
+    // Find the smallest available block that can satisfy the request
     for (cur = req_order; cur <= MAX_ORDER; cur++) {
         if (!list_empty(&g_free_area[cur]))
             break;
@@ -288,6 +290,7 @@ static unsigned long buddy_alloc_order(int req_order) {
     idx = (unsigned long)(list_entry(n, struct frame, node) - g_frames);
     remove_free_block(idx, cur);
 
+    // Split blocks until the required order is reached
     while (cur > req_order) {
         unsigned long buddy;
         cur--;
@@ -520,29 +523,10 @@ static void reserve_kernel_image(void) {
 }
 
 static void reserve_initrd_from_fdt(const void *fdt) {
-    int off;
-    int len_start = 0;
-    int len_end = 0;
-    const void *pstart;
-    const void *pend;
     unsigned long start;
     unsigned long end;
 
-    if (!fdt)
-        return;
-
-    off = fdt_path_offset(fdt, "/chosen");
-    if (off < 0)
-        return;
-
-    pstart = fdt_getprop(fdt, off, "linux,initrd-start", &len_start);
-    pend = fdt_getprop(fdt, off, "linux,initrd-end", &len_end);
-    if (!pstart || !pend)
-        return;
-
-    start = (len_start >= 8) ? fdt_be64(pstart) : fdt_be32(pstart);
-    end = (len_end >= 8) ? fdt_be64(pend) : fdt_be32(pend);
-    if (end > start)
+    if (fdt_get_initrd_region(fdt, &start, &end))
         record_reserved_range(start, end - start);
 }
 
@@ -633,6 +617,7 @@ static int pool_refill(int pool_id) {
     return 1;
 }
 
+// Dynamic Memory Allocator - small chunk allocation
 static void *chunk_alloc(unsigned long size) {
     int pool_id = pick_pool_id(size);
     void *ptr;
@@ -746,12 +731,14 @@ void *alloc(unsigned long size) {
     if (!g_mm_ready || size == 0)
         return 0;
 
+    // Call Dynamic Memory Allocator
     if (size < PAGE_SIZE) {
         pool_id = pick_pool_id(size);
         if (pool_id >= 0)
             return chunk_alloc(size);
     }
 
+    // Call Page Frame Allocator
     pages = (size + PAGE_SIZE - 1UL) / PAGE_SIZE;
     order = ceil_order_pages(pages);
     if (order > MAX_ORDER)

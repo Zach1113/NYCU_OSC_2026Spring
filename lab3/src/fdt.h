@@ -28,5 +28,7 @@ int fdt_get_memory_region(const void *fdt, int entry,
                           unsigned long *base, unsigned long *size);
 int fdt_get_reserved_memory_region(const void *fdt, int entry,
                                    unsigned long *base, unsigned long *size);
+int fdt_get_initrd_region(const void *fdt,
+                          unsigned long *start, unsigned long *end);
 
 #endif

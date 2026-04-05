@@ -14,9 +14,6 @@ struct sbiret {
     long value;
 };
 
-static const void *g_initrd_start;
-static const void *g_initrd_end;
-
 void start_kernel(unsigned long hartid, const void *fdt);
 
 /*
@@ -82,40 +79,6 @@ static int starts_with(const char *s, const char *prefix) {
     return 1;
 }
 
-static void initrd_from_dtb(const void *fdt) {
-    int off;
-    int len_start = 0;
-    int len_end = 0;
-    const void *pstart;
-    const void *pend;
-    unsigned long start;
-    unsigned long end;
-
-    g_initrd_start = 0;
-    g_initrd_end = 0;
-
-    if (!fdt)
-        return;
-
-    off = fdt_path_offset(fdt, "/chosen");
-    if (off < 0)
-        return;
-
-    pstart = fdt_getprop(fdt, off, "linux,initrd-start", &len_start);
-    pend = fdt_getprop(fdt, off, "linux,initrd-end", &len_end);
-    if (!pstart || !pend)
-        return;
-
-    start = (len_start >= 8) ? fdt_be64(pstart) : fdt_be32(pstart);
-    end = (len_end >= 8) ? fdt_be64(pend) : fdt_be32(pend);
-    if (end <= start)
-        return;
-
-    g_initrd_start = (const void *)start;
-    g_initrd_end = (const void *)end;
-    cpio_set_archive(g_initrd_start, g_initrd_end);
-}
-
 /* Shell commands */
 static void cmd_help(void) {
     uart_puts("Available commands:\n");
@@ -179,7 +142,7 @@ void start_kernel(unsigned long hartid, const void *fdt) {
     (void)hartid;
     uart_init_from_dtb(fdt);
 
-    initrd_from_dtb(fdt);
+    cpio_init_from_dtb(fdt);
     mm_init(fdt);
 
     uart_puts("\nNYCU OSC2026 RISC-V Kernel\n");
