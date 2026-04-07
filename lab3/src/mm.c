@@ -304,10 +304,12 @@ static unsigned long buddy_alloc_order(int req_order) {
     return idx;
 }
 
+// free page block
 static void buddy_free_idx(unsigned long *idx_io, int *order_io) {
     unsigned long idx = *idx_io;
     int order = *order_io;
 
+    // merge iteratively
     while (order < MAX_ORDER) {
         unsigned long buddy = idx ^ (1UL << order);
         if (buddy >= g_num_pages) {
@@ -405,8 +407,11 @@ static int startup_find_conflict(unsigned long start, unsigned long end,
         unsigned long res_start = g_reserved_regions[i].start;
         unsigned long res_end = g_reserved_regions[i].end;
 
+        // no conflict, pass
         if (end <= res_start || start >= res_end)
             continue;
+        
+        // conflict, update candidate
         if (!found || res_end > candidate)
             candidate = res_end;
         found = 1;
@@ -431,8 +436,8 @@ static unsigned long startup_alloc(unsigned long size, unsigned long align) {
         if (end < start || end > g_startup_end)
             return (unsigned long)-1;
         if (!startup_find_conflict(start, end, &next_start)) {
-            g_startup_cur = end;
-            return start;
+            g_startup_cur = end; // starting address of next startup allocation
+            return start; // g_frame starting address
         }
         g_startup_cur = next_start;
     }
@@ -570,12 +575,18 @@ static void build_initial_free_lists(void) {
             i++;
         remain = i - run_start;
 
+        // break the free range into blocks and add to free lists
         while (remain > 0) {
             order = MAX_ORDER;
+            
+            // adjust order to ensure block head alignment
             while (order > 0 && ((run_start & ((1UL << order) - 1UL)) != 0))
                 order--;
+
+            // adjust order to fit the remaining pages
             while ((1UL << order) > remain)
                 order--;
+            
             add_free_block(run_start, order);
             run_start += (1UL << order);
             remain -= (1UL << order);
@@ -635,8 +646,9 @@ static void *chunk_alloc(unsigned long size) {
     return ptr;
 }
 
+// free small chunk
 static int chunk_free_ptr(unsigned long pa) {
-    unsigned long base_pa = pa & ~(PAGE_SIZE - 1UL);
+    unsigned long base_pa = pa & ~(PAGE_SIZE - 1UL); // page-aligned base address of the chunk
     unsigned long idx;
     unsigned long chunk_size;
     unsigned long off;
@@ -644,6 +656,8 @@ static int chunk_free_ptr(unsigned long pa) {
 
     if (!in_range_pa(base_pa))
         return 0;
+
+    // check if base_pa is a chunk page
     idx = pa_to_idx(base_pa);
     if (idx >= g_num_pages || g_frames[idx].state != FRAME_CHUNK_PAGE)
         return 0;
@@ -652,6 +666,7 @@ static int chunk_free_ptr(unsigned long pa) {
     if (pool_id >= POOL_COUNT)
         return 0;
 
+    // check if pa is chunk-aligned within the page
     chunk_size = g_pools[pool_id].chunk_size;
     off = pa - base_pa;
     if ((off % chunk_size) != 0)
@@ -783,9 +798,11 @@ void free(void *ptr) {
         return;
     }
 
+    // try free chunk
     if (chunk_free_ptr(pa))
         return;
 
+    // check if pointer is page-aligned
     if ((pa & (PAGE_SIZE - 1UL)) != 0) {
         if (!g_mm_log_enabled)
             return;
@@ -795,6 +812,7 @@ void free(void *ptr) {
         return;
     }
 
+    // check if pointer is head of allocated block
     idx = pa_to_idx(pa);
     if (idx >= g_num_pages || g_frames[idx].state != FRAME_ALLOC_HEAD) {
         if (!g_mm_log_enabled)
@@ -805,6 +823,7 @@ void free(void *ptr) {
         return;
     }
 
+    // Free page block
     order = g_frames[idx].order;
     buddy_free_idx(&idx, &order);
     if (g_mm_log_enabled) {
