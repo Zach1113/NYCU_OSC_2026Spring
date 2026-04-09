@@ -51,6 +51,7 @@ static struct chunk_pool g_pools[POOL_COUNT];
 static int g_mm_ready;
 static int g_mm_log_enabled = 1;
 static int g_chunk_log_enabled = 1;
+static int g_mm_self_test_dump_on_change;
 static unsigned long g_mm_base;
 static unsigned long g_mm_size;
 static unsigned long g_num_pages;
@@ -249,11 +250,15 @@ static void add_free_block(unsigned long idx, int order) {
     block_set_free_head(idx, order);
     list_add(&g_frames[idx].node, &g_free_area[order]);
     log_add_block(idx, order);
+    if (g_mm_self_test_dump_on_change)
+        mm_dump_free_areas();
 }
 
 static void remove_free_block(unsigned long idx, int order) {
     list_del(&g_frames[idx].node);
     log_remove_block(idx, order);
+    if (g_mm_self_test_dump_on_change)
+        mm_dump_free_areas();
 }
 
 static int ceil_order_pages(unsigned long pages) {
@@ -874,6 +879,8 @@ void mm_self_test(void) {
     void *kmem_ptr[102];
     int i;
 
+    g_mm_self_test_dump_on_change = 1;
+
     uart_puts("[MMTEST] start\n");
     uart_puts("[MMTEST] initial free areas\n");
     mm_dump_free_areas();
@@ -920,6 +927,7 @@ void mm_self_test(void) {
 
     mm_dump_free_areas();
     uart_puts("[MMTEST] done\n");
+    g_mm_self_test_dump_on_change = 0;
 }
 
 void mm_set_log_enabled(int enabled) {
