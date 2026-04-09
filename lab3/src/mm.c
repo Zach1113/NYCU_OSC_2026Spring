@@ -5,8 +5,6 @@
 
 #define PAGE_SIZE   4096UL
 #define MAX_ORDER   10
-#define MAX_MANAGED_SIZE (64UL * 1024UL * 1024UL)
-#define MAX_MANAGED_PAGES (MAX_MANAGED_SIZE / PAGE_SIZE)
 #define MAX_ALLOC_SIZE (PAGE_SIZE * (1UL << MAX_ORDER))
 
 #define FRAME_FREE_HEAD  1U
@@ -19,6 +17,9 @@
 
 #define INVALID_POOL_ID  0xFFFFU
 #define POOL_COUNT       8
+
+#define LOGF_VERBOSE         (1U << 0)
+#define LOGF_DUMP_ON_CHANGE  (1U << 1)
 
 static const unsigned long g_pool_sizes[POOL_COUNT] = {
     16UL, 32UL, 64UL, 128UL, 256UL, 512UL, 1024UL, 2048UL
@@ -49,9 +50,7 @@ static struct frame *g_frames;
 static struct list_head g_free_area[MAX_ORDER + 1];
 static struct chunk_pool g_pools[POOL_COUNT];
 static int g_mm_ready;
-static int g_mm_log_enabled = 1;
-static int g_chunk_log_enabled = 1;
-static int g_mm_self_test_dump_on_change;
+static unsigned int g_log_flags;
 static unsigned long g_mm_base;
 static unsigned long g_mm_size;
 static unsigned long g_num_pages;
@@ -69,7 +68,7 @@ extern char _start[];
 extern char _end[];
 
 static void log_add_block(unsigned long idx, int order) {
-    if (!g_mm_log_enabled)
+    if (!(g_log_flags & LOGF_VERBOSE))
         return;
     unsigned long end = idx + (1UL << order) - 1UL;
     uart_puts("[+] Add page ");
@@ -84,7 +83,7 @@ static void log_add_block(unsigned long idx, int order) {
 }
 
 static void log_remove_block(unsigned long idx, int order) {
-    if (!g_mm_log_enabled)
+    if (!(g_log_flags & LOGF_VERBOSE))
         return;
     unsigned long end = idx + (1UL << order) - 1UL;
     uart_puts("[-] Remove page ");
@@ -99,7 +98,7 @@ static void log_remove_block(unsigned long idx, int order) {
 }
 
 static void log_buddy(unsigned long idx, unsigned long buddy, int order, int found) {
-    if (!g_mm_log_enabled)
+    if (!(g_log_flags & LOGF_VERBOSE))
         return;
     if (found)
         uart_puts("[*] Buddy found! buddy idx: ");
@@ -114,7 +113,7 @@ static void log_buddy(unsigned long idx, unsigned long buddy, int order, int fou
 }
 
 static void log_split(unsigned long parent, int from_order, unsigned long child) {
-    if (!g_mm_log_enabled)
+    if (!(g_log_flags & LOGF_VERBOSE))
         return;
     uart_puts("[*] Release redundant memory block: split page ");
     uart_dec(parent);
@@ -128,7 +127,7 @@ static void log_split(unsigned long parent, int from_order, unsigned long child)
 }
 
 static void log_chunk_alloc(unsigned long pa, unsigned long chunk_size) {
-    if (!g_chunk_log_enabled)
+    if (!(g_log_flags & LOGF_VERBOSE))
         return;
     uart_puts("[Chunk] Allocate ");
     uart_hex(pa);
@@ -138,7 +137,7 @@ static void log_chunk_alloc(unsigned long pa, unsigned long chunk_size) {
 }
 
 static void log_chunk_free(unsigned long pa, unsigned long chunk_size) {
-    if (!g_chunk_log_enabled)
+    if (!(g_log_flags & LOGF_VERBOSE))
         return;
     uart_puts("[Chunk] Free ");
     uart_hex(pa);
@@ -148,7 +147,7 @@ static void log_chunk_free(unsigned long pa, unsigned long chunk_size) {
 }
 
 static void log_chunk_refill(unsigned long page_pa, unsigned long chunk_size) {
-    if (!g_chunk_log_enabled)
+    if (!(g_log_flags & LOGF_VERBOSE))
         return;
     uart_puts("[Chunk] Refill pool size ");
     uart_dec(chunk_size);
@@ -159,7 +158,7 @@ static void log_chunk_refill(unsigned long page_pa, unsigned long chunk_size) {
 
 static void log_reserve_range(unsigned long start, unsigned long end,
                               unsigned long start_idx, unsigned long end_idx) {
-    if (!g_mm_log_enabled)
+    if (!(g_log_flags & LOGF_VERBOSE))
         return;
     uart_puts("[Reserve] Reserve address [");
     uart_hex(start);
@@ -250,14 +249,14 @@ static void add_free_block(unsigned long idx, int order) {
     block_set_free_head(idx, order);
     list_add(&g_frames[idx].node, &g_free_area[order]);
     log_add_block(idx, order);
-    if (g_mm_self_test_dump_on_change)
+    if (g_log_flags & LOGF_DUMP_ON_CHANGE)
         mm_dump_free_areas();
 }
 
 static void remove_free_block(unsigned long idx, int order) {
     list_del(&g_frames[idx].node);
     log_remove_block(idx, order);
-    if (g_mm_self_test_dump_on_change)
+    if (g_log_flags & LOGF_DUMP_ON_CHANGE)
         mm_dump_free_areas();
 }
 
@@ -503,8 +502,6 @@ static int init_memory_region_from_fdt(const void *fdt) {
     if (!fdt_get_memory_region(fdt, 0, &base, &size))
         return 0;
 
-    if (size > MAX_MANAGED_SIZE)
-        size = MAX_MANAGED_SIZE;
     size &= ~(PAGE_SIZE - 1UL);
     if (size == 0)
         return 0;
@@ -685,6 +682,7 @@ static int chunk_free_ptr(unsigned long pa) {
 void mm_init(const void *fdt) {
     unsigned long i = 0;
     int order;
+    unsigned int prev_log_flags;
 
     g_mm_ready = 0;
     g_frames = 0;
@@ -695,6 +693,7 @@ void mm_init(const void *fdt) {
     g_startup_cur = 0;
     g_startup_end = 0;
     g_reserved_region_count = 0;
+    g_log_flags = 0;
 
     for (order = 0; order <= MAX_ORDER; order++)
         list_init(&g_free_area[order]);
@@ -727,7 +726,10 @@ void mm_init(const void *fdt) {
     }
 
     apply_reserved_ranges();
+    prev_log_flags = g_log_flags;
+    g_log_flags &= ~LOGF_VERBOSE;
     build_initial_free_lists();
+    g_log_flags = prev_log_flags;
 
     g_mm_ready = 1;
     uart_puts("[MM] Buddy allocator initialized from DTB. Base=");
@@ -769,7 +771,7 @@ void *alloc(unsigned long size) {
         return 0;
 
     pa = idx_to_pa(idx);
-    if (g_mm_log_enabled) {
+    if (g_log_flags & LOGF_VERBOSE) {
         uart_puts("[Page] Allocate ");
         uart_hex(pa);
         uart_puts(" at order ");
@@ -795,7 +797,7 @@ void free(void *ptr) {
 
     pa = (unsigned long)ptr;
     if (!in_range_pa(pa)) {
-        if (!g_mm_log_enabled)
+        if (!(g_log_flags & LOGF_VERBOSE))
             return;
         uart_puts("[Page] Free ignore invalid ptr ");
         uart_hex(pa);
@@ -809,7 +811,7 @@ void free(void *ptr) {
 
     // check if pointer is page-aligned
     if ((pa & (PAGE_SIZE - 1UL)) != 0) {
-        if (!g_mm_log_enabled)
+        if (!(g_log_flags & LOGF_VERBOSE))
             return;
         uart_puts("[Page] Free ignore non-page ptr ");
         uart_hex(pa);
@@ -820,7 +822,7 @@ void free(void *ptr) {
     // check if pointer is head of allocated block
     idx = pa_to_idx(pa);
     if (idx >= g_num_pages || g_frames[idx].state != FRAME_ALLOC_HEAD) {
-        if (!g_mm_log_enabled)
+        if (!(g_log_flags & LOGF_VERBOSE))
             return;
         uart_puts("[Page] Free ignore non-head ptr ");
         uart_hex(pa);
@@ -831,7 +833,7 @@ void free(void *ptr) {
     // Free page block
     order = g_frames[idx].order;
     buddy_free_idx(&idx, &order);
-    if (g_mm_log_enabled) {
+    if (g_log_flags & LOGF_VERBOSE) {
         uart_puts("[Page] Free ");
         uart_hex(pa);
         uart_puts(" and add back to order ");
@@ -878,8 +880,9 @@ void mm_self_test(void) {
     char *kmem_ptr7;
     void *kmem_ptr[102];
     int i;
+    unsigned int prev_log_flags = g_log_flags;
 
-    g_mm_self_test_dump_on_change = 1;
+    g_log_flags |= LOGF_VERBOSE | LOGF_DUMP_ON_CHANGE;
 
     uart_puts("[MMTEST] start\n");
     uart_puts("[MMTEST] initial free areas\n");
@@ -928,12 +931,14 @@ void mm_self_test(void) {
     }
 
     uart_puts("[MMTEST] done\n");
-    g_mm_self_test_dump_on_change = 0;
+    g_log_flags = prev_log_flags;
 }
 
 void mm_set_log_enabled(int enabled) {
-    g_mm_log_enabled = enabled ? 1 : 0;
-    g_chunk_log_enabled = g_mm_log_enabled;
+    if (enabled)
+        g_log_flags |= LOGF_VERBOSE;
+    else
+        g_log_flags &= ~LOGF_VERBOSE;
     uart_puts("[MM] verbose log ");
-    uart_puts(g_mm_log_enabled ? "on\n" : "off\n");
+    uart_puts((g_log_flags & LOGF_VERBOSE) ? "on\n" : "off\n");
 }
