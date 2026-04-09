@@ -884,24 +884,25 @@ void mm_self_test(void) {
     uart_puts("[MMTEST] start\n");
     uart_puts("[MMTEST] initial free areas\n");
     mm_dump_free_areas();
-    uart_puts("Testing memory allocation...\n");
+    uart_puts("----- Testing memory allocation -----\n");
     ptr1 = (char *)alloc(4000);
     ptr2 = (char *)alloc(8000);
     ptr3 = (char *)alloc(4000);
     ptr4 = (char *)alloc(4000);
 
-    mm_dump_free_areas();
-
+    uart_puts("----- Deallocation -----\n");
     free(ptr1);
     free(ptr2);
     free(ptr3);
     free(ptr4);
 
-    uart_puts("Testing dynamic allocator...\n");
+    uart_puts("----- Testing dynamic allocator -----\n");
     kmem_ptr1 = (char *)alloc(16);
     kmem_ptr2 = (char *)alloc(32);
     kmem_ptr3 = (char *)alloc(64);
     kmem_ptr4 = (char *)alloc(128);
+
+    uart_puts("----- Deallocation -----\n");
     free(kmem_ptr1);
     free(kmem_ptr2);
     free(kmem_ptr3);
@@ -912,6 +913,7 @@ void mm_self_test(void) {
     free(kmem_ptr5);
     free(kmem_ptr6);
 
+    uart_puts("----- Testing 100 chunk allocations -----\n");
     for (i = 0; i < 100; i++)
         kmem_ptr[i] = alloc(128);
     for (i = 0; i < 100; i++)
@@ -925,7 +927,6 @@ void mm_self_test(void) {
         free(kmem_ptr7);
     }
 
-    mm_dump_free_areas();
     uart_puts("[MMTEST] done\n");
     g_mm_self_test_dump_on_change = 0;
 }
