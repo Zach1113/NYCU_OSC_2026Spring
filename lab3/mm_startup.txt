@@ -1,0 +1,32 @@
+# load
+Send header: <magic:u32><size:u32><checksum:u32> then payload
+Waiting for stream...
+Receiving 0x0000000000004fa0 bytes to 0x0000000000200000
+load: transfer complete, jumping to 0x0000000000200000
+[Reserve] Reserve address [0x0000000000200000, 0x000000000020e000). Range of pages: [512, 526)
+[Reserve] Reserve address [0x0000000000000000, 0x0000000000080000). Range of pages: [0, 128)
+[Reserve] Reserve address [0x0000000000080000, 0x00000000000e0000). Range of pages: [128, 224)
+[+] Add page 224 to order 5. Range of pages: [224, 255]
+[+] Add page 256 to order 8. Range of pages: [256, 511]
+[+] Add page 526 to order 1. Range of pages: [526, 527]
+[+] Add page 528 to order 4. Range of pages: [528, 543]
+[+] Add page 544 to order 5. Range of pages: [544, 575]
+[+] Add page 576 to order 6. Range of pages: [576, 639]
+[+] Add page 640 to order 7. Range of pages: [640, 767]
+[+] Add page 768 to order 8. Range of pages: [768, 1023]
+[+] Add page 1024 to order 10. Range of pages: [1024, 2047]
+[+] Add page 2048 to order 10. Range of pages: [2048, 3071]
+[+] Add page 3072 to order 10. Range of pages: [3072, 4095]
+[+] Add page 4096 to order 10. Range of pages: [4096, 5119]
+[+] Add page 5120 to order 10. Range of pages: [5120, 6143]
+[+] Add page 6144 to order 10. Range of pages: [6144, 7167]
+[+] Add page 7168 to order 10. Range of pages: [7168, 8191]
+[+] Add page 8192 to order 10. Range of pages: [8192, 9215]
+[+] Add page 9216 to order 10. Range of pages: [9216, 10239]
+[+] Add page 10240 to order 10. Range of pages: [10240, 11263]
+[+] Add page 11264 to order 10. Range of pages: [11264, 12287]
+[+] Add page 12288 to order 10. Range of pages: [12288, 13311]
+[+] Add page 13312 to order 10. Range of pages: [13312, 14335]
+[+] Add page 14336 to order 10. Range of pages: [14336, 15359]
+[+] Add page 15360 to order 10. Range of pages: [15360, 16383]
+[MM] Buddy allocator initialized from DTB. Base=0x0000000000000000 Size=0x0000000004000000 FrameArray=0x0000000000080000 Bytes=0x0000000000060000

@@ -1,0 +1,519 @@
+# mtest
+[MMTEST] start
+[MMTEST] initial free areas
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 3
+  order 0: 2
+----- Testing memory allocation -----
+[-] Remove page 515471 from order 0. Range of pages: [515471, 515471]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 3
+  order 0: 1
+[Page] Allocate 0x000000007dd8f000 at order 0, page 515471. Next address at order 0: 0x000000007dd6e000
+[-] Remove page 515468 from order 1. Range of pages: [515468, 515469]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 2
+  order 0: 1
+[Page] Allocate 0x000000007dd8c000 at order 1, page 515468. Next address at order 1: 0x000000007dd6c000
+[-] Remove page 515438 from order 0. Range of pages: [515438, 515438]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 2
+  order 0: 0
+[Page] Allocate 0x000000007dd6e000 at order 0, page 515438. Next address at order 0: 0x0000000000000000
+[-] Remove page 515436 from order 1. Range of pages: [515436, 515437]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 1
+  order 0: 0
+[+] Add page 515437 to order 0. Range of pages: [515437, 515437]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 1
+  order 0: 1
+[*] Release redundant memory block: split page 515436 order 1, return buddy page 515437 order 0
+[Page] Allocate 0x000000007dd6c000 at order 0, page 515436. Next address at order 0: 0x000000007dd6d000
+----- Deallocation -----
+[*] Buddy not mergeable. buddy idx: 515470 for page 515471 with order 0
+[+] Add page 515471 to order 0. Range of pages: [515471, 515471]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 1
+  order 0: 2
+[Page] Free 0x000000007dd8f000 and add back to order 0, page 515471. Next address at order 0: 0x000000007dd8f000
+[*] Buddy not mergeable. buddy idx: 515470 for page 515468 with order 1
+[+] Add page 515468 to order 1. Range of pages: [515468, 515469]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 2
+  order 0: 2
+[Page] Free 0x000000007dd8c000 and add back to order 1, page 515468. Next address at order 1: 0x000000007dd8c000
+[*] Buddy not mergeable. buddy idx: 515439 for page 515438 with order 0
+[+] Add page 515438 to order 0. Range of pages: [515438, 515438]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 2
+  order 0: 3
+[Page] Free 0x000000007dd6e000 and add back to order 0, page 515438. Next address at order 0: 0x000000007dd6e000
+[*] Buddy found! buddy idx: 515437 for page 515436 with order 0
+[-] Remove page 515437 from order 0. Range of pages: [515437, 515437]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 2
+  order 0: 2
+[*] Buddy not mergeable. buddy idx: 515438 for page 515436 with order 1
+[+] Add page 515436 to order 1. Range of pages: [515436, 515437]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 3
+  order 0: 2
+[Page] Free 0x000000007dd6c000 and add back to order 1, page 515436. Next address at order 1: 0x000000007dd6c000
+----- Testing dynamic allocator -----
+[-] Remove page 515438 from order 0. Range of pages: [515438, 515438]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 3
+  order 0: 1
+[Chunk] Refill pool size 16 from page 0x000000007dd6e000
+[Chunk] Allocate 0x000000007dd6eff0 at chunk size 16
+[-] Remove page 515471 from order 0. Range of pages: [515471, 515471]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 3
+  order 0: 0
+[Chunk] Refill pool size 32 from page 0x000000007dd8f000
+[Chunk] Allocate 0x000000007dd8ffe0 at chunk size 32
+[-] Remove page 515436 from order 1. Range of pages: [515436, 515437]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 2
+  order 0: 0
+[+] Add page 515437 to order 0. Range of pages: [515437, 515437]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 2
+  order 0: 1
+[*] Release redundant memory block: split page 515436 order 1, return buddy page 515437 order 0
+[Chunk] Refill pool size 64 from page 0x000000007dd6c000
+[Chunk] Allocate 0x000000007dd6cfc0 at chunk size 64
+[-] Remove page 515437 from order 0. Range of pages: [515437, 515437]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 2
+  order 0: 0
+[Chunk] Refill pool size 128 from page 0x000000007dd6d000
+[Chunk] Allocate 0x000000007dd6df80 at chunk size 128
+----- Deallocation -----
+[Chunk] Free 0x000000007dd6eff0 at chunk size 16
+[Chunk] Free 0x000000007dd8ffe0 at chunk size 32
+[Chunk] Free 0x000000007dd6cfc0 at chunk size 64
+[Chunk] Free 0x000000007dd6df80 at chunk size 128
+[Chunk] Allocate 0x000000007dd6eff0 at chunk size 16
+[Chunk] Allocate 0x000000007dd8ffe0 at chunk size 32
+[Chunk] Free 0x000000007dd6eff0 at chunk size 16
+[Chunk] Free 0x000000007dd8ffe0 at chunk size 32
+----- Testing 100 chunk allocations -----
+[Chunk] Allocate 0x000000007dd6df80 at chunk size 128
+[Chunk] Allocate 0x000000007dd6df00 at chunk size 128
+[Chunk] Allocate 0x000000007dd6de80 at chunk size 128
+[Chunk] Allocate 0x000000007dd6de00 at chunk size 128
+[Chunk] Allocate 0x000000007dd6dd80 at chunk size 128
+[Chunk] Allocate 0x000000007dd6dd00 at chunk size 128
+[Chunk] Allocate 0x000000007dd6dc80 at chunk size 128
+[Chunk] Allocate 0x000000007dd6dc00 at chunk size 128
+[Chunk] Allocate 0x000000007dd6db80 at chunk size 128
+[Chunk] Allocate 0x000000007dd6db00 at chunk size 128
+[Chunk] Allocate 0x000000007dd6da80 at chunk size 128
+[Chunk] Allocate 0x000000007dd6da00 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d980 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d900 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d880 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d800 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d780 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d700 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d680 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d600 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d580 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d500 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d480 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d400 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d380 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d300 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d280 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d200 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d180 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d100 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d080 at chunk size 128
+[Chunk] Allocate 0x000000007dd6d000 at chunk size 128
+[-] Remove page 515468 from order 1. Range of pages: [515468, 515469]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 1
+  order 0: 0
+[+] Add page 515469 to order 0. Range of pages: [515469, 515469]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 1
+  order 0: 1
+[*] Release redundant memory block: split page 515468 order 1, return buddy page 515469 order 0
+[Chunk] Refill pool size 128 from page 0x000000007dd8c000
+[Chunk] Allocate 0x000000007dd8cf80 at chunk size 128
+[Chunk] Allocate 0x000000007dd8cf00 at chunk size 128
+[Chunk] Allocate 0x000000007dd8ce80 at chunk size 128
+[Chunk] Allocate 0x000000007dd8ce00 at chunk size 128
+[Chunk] Allocate 0x000000007dd8cd80 at chunk size 128
+[Chunk] Allocate 0x000000007dd8cd00 at chunk size 128
+[Chunk] Allocate 0x000000007dd8cc80 at chunk size 128
+[Chunk] Allocate 0x000000007dd8cc00 at chunk size 128
+[Chunk] Allocate 0x000000007dd8cb80 at chunk size 128
+[Chunk] Allocate 0x000000007dd8cb00 at chunk size 128
+[Chunk] Allocate 0x000000007dd8ca80 at chunk size 128
+[Chunk] Allocate 0x000000007dd8ca00 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c980 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c900 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c880 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c800 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c780 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c700 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c680 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c600 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c580 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c500 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c480 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c400 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c380 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c300 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c280 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c200 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c180 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c100 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c080 at chunk size 128
+[Chunk] Allocate 0x000000007dd8c000 at chunk size 128
+[-] Remove page 515469 from order 0. Range of pages: [515469, 515469]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 1
+  order 0: 0
+[Chunk] Refill pool size 128 from page 0x000000007dd8d000
+[Chunk] Allocate 0x000000007dd8df80 at chunk size 128
+[Chunk] Allocate 0x000000007dd8df00 at chunk size 128
+[Chunk] Allocate 0x000000007dd8de80 at chunk size 128
+[Chunk] Allocate 0x000000007dd8de00 at chunk size 128
+[Chunk] Allocate 0x000000007dd8dd80 at chunk size 128
+[Chunk] Allocate 0x000000007dd8dd00 at chunk size 128
+[Chunk] Allocate 0x000000007dd8dc80 at chunk size 128
+[Chunk] Allocate 0x000000007dd8dc00 at chunk size 128
+[Chunk] Allocate 0x000000007dd8db80 at chunk size 128
+[Chunk] Allocate 0x000000007dd8db00 at chunk size 128
+[Chunk] Allocate 0x000000007dd8da80 at chunk size 128
+[Chunk] Allocate 0x000000007dd8da00 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d980 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d900 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d880 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d800 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d780 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d700 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d680 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d600 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d580 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d500 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d480 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d400 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d380 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d300 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d280 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d200 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d180 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d100 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d080 at chunk size 128
+[Chunk] Allocate 0x000000007dd8d000 at chunk size 128
+[-] Remove page 3598 from order 1. Range of pages: [3598, 3599]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 0
+  order 0: 0
+[+] Add page 3599 to order 0. Range of pages: [3599, 3599]
+[MM] Free area summary
+  order 10: 501
+  order 9: 2
+  order 8: 4
+  order 7: 3
+  order 6: 4
+  order 5: 3
+  order 4: 2
+  order 3: 1
+  order 2: 1
+  order 1: 0
+  order 0: 1
+[*] Release redundant memory block: split page 3598 order 1, return buddy page 3599 order 0
+[Chunk] Refill pool size 128 from page 0x0000000000e0e000
+[Chunk] Allocate 0x0000000000e0ef80 at chunk size 128
+[Chunk] Allocate 0x0000000000e0ef00 at chunk size 128
+[Chunk] Allocate 0x0000000000e0ee80 at chunk size 128
+[Chunk] Allocate 0x0000000000e0ee00 at chunk size 128
+[Chunk] Free 0x000000007dd6df80 at chunk size 128
+[Chunk] Free 0x000000007dd6df00 at chunk size 128
+[Chunk] Free 0x000000007dd6de80 at chunk size 128
+[Chunk] Free 0x000000007dd6de00 at chunk size 128
+[Chunk] Free 0x000000007dd6dd80 at chunk size 128
+[Chunk] Free 0x000000007dd6dd00 at chunk size 128
+[Chunk] Free 0x000000007dd6dc80 at chunk size 128
+[Chunk] Free 0x000000007dd6dc00 at chunk size 128
+[Chunk] Free 0x000000007dd6db80 at chunk size 128
+[Chunk] Free 0x000000007dd6db00 at chunk size 128
+[Chunk] Free 0x000000007dd6da80 at chunk size 128
+[Chunk] Free 0x000000007dd6da00 at chunk size 128
+[Chunk] Free 0x000000007dd6d980 at chunk size 128
+[Chunk] Free 0x000000007dd6d900 at chunk size 128
+[Chunk] Free 0x000000007dd6d880 at chunk size 128
+[Chunk] Free 0x000000007dd6d800 at chunk size 128
+[Chunk] Free 0x000000007dd6d780 at chunk size 128
+[Chunk] Free 0x000000007dd6d700 at chunk size 128
+[Chunk] Free 0x000000007dd6d680 at chunk size 128
+[Chunk] Free 0x000000007dd6d600 at chunk size 128
+[Chunk] Free 0x000000007dd6d580 at chunk size 128
+[Chunk] Free 0x000000007dd6d500 at chunk size 128
+[Chunk] Free 0x000000007dd6d480 at chunk size 128
+[Chunk] Free 0x000000007dd6d400 at chunk size 128
+[Chunk] Free 0x000000007dd6d380 at chunk size 128
+[Chunk] Free 0x000000007dd6d300 at chunk size 128
+[Chunk] Free 0x000000007dd6d280 at chunk size 128
+[Chunk] Free 0x000000007dd6d200 at chunk size 128
+[Chunk] Free 0x000000007dd6d180 at chunk size 128
+[Chunk] Free 0x000000007dd6d100 at chunk size 128
+[Chunk] Free 0x000000007dd6d080 at chunk size 128
+[Chunk] Free 0x000000007dd6d000 at chunk size 128
+[Chunk] Free 0x000000007dd8cf80 at chunk size 128
+[Chunk] Free 0x000000007dd8cf00 at chunk size 128
+[Chunk] Free 0x000000007dd8ce80 at chunk size 128
+[Chunk] Free 0x000000007dd8ce00 at chunk size 128
+[Chunk] Free 0x000000007dd8cd80 at chunk size 128
+[Chunk] Free 0x000000007dd8cd00 at chunk size 128
+[Chunk] Free 0x000000007dd8cc80 at chunk size 128
+[Chunk] Free 0x000000007dd8cc00 at chunk size 128
+[Chunk] Free 0x000000007dd8cb80 at chunk size 128
+[Chunk] Free 0x000000007dd8cb00 at chunk size 128
+[Chunk] Free 0x000000007dd8ca80 at chunk size 128
+[Chunk] Free 0x000000007dd8ca00 at chunk size 128
+[Chunk] Free 0x000000007dd8c980 at chunk size 128
+[Chunk] Free 0x000000007dd8c900 at chunk size 128
+[Chunk] Free 0x000000007dd8c880 at chunk size 128
+[Chunk] Free 0x000000007dd8c800 at chunk size 128
+[Chunk] Free 0x000000007dd8c780 at chunk size 128
+[Chunk] Free 0x000000007dd8c700 at chunk size 128
+[Chunk] Free 0x000000007dd8c680 at chunk size 128
+[Chunk] Free 0x000000007dd8c600 at chunk size 128
+[Chunk] Free 0x000000007dd8c580 at chunk size 128
+[Chunk] Free 0x000000007dd8c500 at chunk size 128
+[Chunk] Free 0x000000007dd8c480 at chunk size 128
+[Chunk] Free 0x000000007dd8c400 at chunk size 128
+[Chunk] Free 0x000000007dd8c380 at chunk size 128
+[Chunk] Free 0x000000007dd8c300 at chunk size 128
+[Chunk] Free 0x000000007dd8c280 at chunk size 128
+[Chunk] Free 0x000000007dd8c200 at chunk size 128
+[Chunk] Free 0x000000007dd8c180 at chunk size 128
+[Chunk] Free 0x000000007dd8c100 at chunk size 128
+[Chunk] Free 0x000000007dd8c080 at chunk size 128
+[Chunk] Free 0x000000007dd8c000 at chunk size 128
+[Chunk] Free 0x000000007dd8df80 at chunk size 128
+[Chunk] Free 0x000000007dd8df00 at chunk size 128
+[Chunk] Free 0x000000007dd8de80 at chunk size 128
+[Chunk] Free 0x000000007dd8de00 at chunk size 128
+[Chunk] Free 0x000000007dd8dd80 at chunk size 128
+[Chunk] Free 0x000000007dd8dd00 at chunk size 128
+[Chunk] Free 0x000000007dd8dc80 at chunk size 128
+[Chunk] Free 0x000000007dd8dc00 at chunk size 128
+[Chunk] Free 0x000000007dd8db80 at chunk size 128
+[Chunk] Free 0x000000007dd8db00 at chunk size 128
+[Chunk] Free 0x000000007dd8da80 at chunk size 128
+[Chunk] Free 0x000000007dd8da00 at chunk size 128
+[Chunk] Free 0x000000007dd8d980 at chunk size 128
+[Chunk] Free 0x000000007dd8d900 at chunk size 128
+[Chunk] Free 0x000000007dd8d880 at chunk size 128
+[Chunk] Free 0x000000007dd8d800 at chunk size 128
+[Chunk] Free 0x000000007dd8d780 at chunk size 128
+[Chunk] Free 0x000000007dd8d700 at chunk size 128
+[Chunk] Free 0x000000007dd8d680 at chunk size 128
+[Chunk] Free 0x000000007dd8d600 at chunk size 128
+[Chunk] Free 0x000000007dd8d580 at chunk size 128
+[Chunk] Free 0x000000007dd8d500 at chunk size 128
+[Chunk] Free 0x000000007dd8d480 at chunk size 128
+[Chunk] Free 0x000000007dd8d400 at chunk size 128
+[Chunk] Free 0x000000007dd8d380 at chunk size 128
+[Chunk] Free 0x000000007dd8d300 at chunk size 128
+[Chunk] Free 0x000000007dd8d280 at chunk size 128
+[Chunk] Free 0x000000007dd8d200 at chunk size 128
+[Chunk] Free 0x000000007dd8d180 at chunk size 128
+[Chunk] Free 0x000000007dd8d100 at chunk size 128
+[Chunk] Free 0x000000007dd8d080 at chunk size 128
+[Chunk] Free 0x000000007dd8d000 at chunk size 128
+[Chunk] Free 0x0000000000e0ef80 at chunk size 128
+[Chunk] Free 0x0000000000e0ef00 at chunk size 128
+[Chunk] Free 0x0000000000e0ee80 at chunk size 128
+[Chunk] Free 0x0000000000e0ee00 at chunk size 128
+Allocation failed as expected for size > MAX_ALLOC_SIZE
+[MMTEST] done
+# 
