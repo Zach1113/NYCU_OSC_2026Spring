@@ -253,3 +253,43 @@ void cpio_cat(const char *filename) {
     uart_puts(filename);
     uart_putc('\n');
 }
+
+int cpio_find(const char *filename, const void **data, unsigned long *size) {
+    const char *cursor;
+
+    if (data)
+        *data = 0;
+    if (size)
+        *size = 0;
+
+    if (!cpio_ready() || !filename || filename[0] == '\0')
+        return 0;
+
+    cursor = g_rd_start;
+    while (cursor < g_rd_end) {
+        const char *name;
+        const char *file_data;
+        unsigned long namesz;
+        unsigned long filesz;
+
+        if (!cpio_walk_next(&cursor, 0, &name, &file_data, &namesz, &filesz))
+            return 0;
+
+        if (namesz >= 11 &&
+            name[0] == 'T' && name[1] == 'R' && name[2] == 'A' && name[3] == 'I' &&
+            name[4] == 'L' && name[5] == 'E' && name[6] == 'R' && name[7] == '!' &&
+            name[8] == '!' && name[9] == '!')
+            break;
+
+        if (!filename_match(name, filename))
+            continue;
+
+        if (data)
+            *data = file_data;
+        if (size)
+            *size = filesz;
+        return 1;
+    }
+
+    return 0;
+}
