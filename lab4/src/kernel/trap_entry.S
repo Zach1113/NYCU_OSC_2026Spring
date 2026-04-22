@@ -52,14 +52,14 @@
 .equ KC_S10,      112
 .equ KC_S11,      120
 
-.equ SSTATUS_SPP, 0x100
+.equ SSTATUS_SPP, 0x100 # SPP bit in sstatus register, 0 for user mode, 1 for kernel mode
 
 .balign 4
 .global kernel_trap_vector
 .global enter_user_mode
 
 kernel_trap_vector:
-    addi sp, sp, -8
+    addi sp, sp, -8 # reserve space for t0
     sd t0, 0(sp)
     csrr t0, sstatus
     andi t0, t0, SSTATUS_SPP
@@ -70,18 +70,18 @@ kernel_trap_vector:
     j .Lsave_trap
 
 .Ltrap_from_user:
-    csrr t0, sscratch
-    csrw sscratch, sp
-    mv sp, t0
+    csrr t0, sscratch # save kernel sp to t0
+    csrw sscratch, sp # set sscratch to user sp
+    mv sp, t0 # now the kernel sp is in sp
     addi sp, sp, -TF_SIZE
 
 .Lsave_trap:
     sd ra, TF_RA(sp)
     csrr t0, sstatus
-    andi t0, t0, SSTATUS_SPP
+    andi t0, t0, SSTATUS_SPP # check if the trap is from kernel mode, 0 for user mode, 1 for kernel mode
     bnez t0, .Lsave_kernel_sp
-    csrr t0, sscratch
-    addi t0, t0, 8
+    csrr t0, sscratch # sscratch holds the user sp
+    addi t0, t0, 8 
     j .Lsave_sp_done
 .Lsave_kernel_sp:
     addi t0, sp, TF_SIZE + 8
@@ -179,7 +179,7 @@ kernel_trap_vector:
 
 .Lreturn_user:
     ld t0, TF_SP(sp)
-    csrw sscratch, t0
+    csrw sscratch, t0 # place user sp back to sscratch
 
     ld ra, TF_RA(sp)
     ld gp, TF_GP(sp)
@@ -239,7 +239,7 @@ enter_user_mode:
     ld t0, TF_SEPC(t5)
     csrw sepc, t0
     ld t0, TF_SSTATUS(t5)
-    csrw sstatus, t0
+    csrw sstatus, t0 # set SPP to 0 to indicate the next sret will return to user mode
 
     ld ra, TF_RA(t5)
     ld gp, TF_GP(t5)

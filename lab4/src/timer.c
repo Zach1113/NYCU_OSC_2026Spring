@@ -8,8 +8,8 @@
 #define SBI_EXT_TIME_SET  0UL
 #define SBI_EXT_LEGACY_SET_TIMER 0UL
 
-#define SIE_STIE          (1UL << 5)
-#define SSTATUS_SIE       (1UL << 1)
+#define SIE_STIE          (1UL << 5) // Supervisor Timer Interrupt Enable
+#define SSTATUS_SIE       (1UL << 1) // Supervisor Interrupt Enable
 
 #define DEFAULT_TIMEBASE_HZ 24000000ULL
 #define PERIOD_SECONDS       2ULL
