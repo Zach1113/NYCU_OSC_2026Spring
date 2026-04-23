@@ -21,11 +21,9 @@
 static unsigned long uart_base = UART_BASE_DEFAULT;
 static int uart_irq = 42;
 static int uart_irq_mode;
-static int uart_rx_irq_seen;
-static int uart_tx_irq_seen;
 
 struct ring_buffer {
-    char buf[256];
+    char buf[1024];
     unsigned int head;
     unsigned int tail;
     unsigned int count;
@@ -101,6 +99,14 @@ static unsigned long uart_iir_off(void) {
         return uart_reg32 ? 0x08UL : 0x02UL;
 }
 
+/* Modem Control Register:
+ * On K1/OrangePi, bit3 must be set or RX/TX interrupt conditions stay
+ * internal to the UART and never reach the PLIC.
+ */
+static unsigned long uart_mcr_off(void) {
+        return uart_reg32 ? 0x10UL : 0x04UL;
+}
+
 /* Transmit/Receive data register:
  * reading gets one received byte, writing sends one byte.
  */
@@ -113,6 +119,7 @@ static unsigned long uart_data_off(void) {
 
 #define IER_RX_INT (1U << 0)
 #define IER_TX_INT (1U << 1)
+#define MCR_OUT2   (1U << 3)
 
 #define IIR_NO_INT (1U << 0)
 
@@ -181,42 +188,20 @@ static void uart_tx_kick_locked(void) {
         uart_enable_tx_irq();
 }
 
-static void uart_tx_flush_poll(void) {
-    char c;
-
-    while (rb_pop(&g_tx_rb, &c))
-        uart_putc_poll(c);
-}
-
-static void uart_tx_enqueue_blocking(char c) {
+static void uart_tx_enqueue(char c) {
     unsigned long flags;
 
     while (1) {
         flags = irq_save();
-        uart_tx_kick_locked();
-        if (rb_push(&g_tx_rb, c)) {
+        if (!rb_full(&g_tx_rb)) {
+            rb_push(&g_tx_rb, c);
             uart_enable_tx_irq();
-            uart_tx_kick_locked();
             irq_restore(flags);
-
-            /* Some platforms do not deliver TX-empty interrupts reliably during
-             * bring-up. Until we observe one, synchronously flush the queue so
-             * early boot messages do not get stuck in chunks.
-             */
-            if (!uart_tx_irq_seen)
-                uart_tx_flush_poll();
             return;
         }
         irq_restore(flags);
 
-        /* Buffer is full. Keep helping TX progress even if TX IRQ delivery is
-         * delayed or unavailable on the current platform configuration.
-         */
-        while (rb_full(&g_tx_rb)) {
-            flags = irq_save();
-            uart_tx_kick_locked();
-            irq_restore(flags);
-        }
+        /* Buffer is full; wait for the IRQ-driven TX path to make room. */
     }
 }
 
@@ -312,13 +297,6 @@ int uart_getc_nonblock(char *out) {
     }
     irq_restore(flags);
 
-    /*
-     * Keep the shell usable during bring-up if RX IRQ delivery is not active
-     * yet on the current platform configuration.
-     */
-    if (!uart_rx_irq_seen)
-        return uart_try_hw_getc(out);
-
     return 0;
 }
 
@@ -350,8 +328,8 @@ void uart_putc(char c) {
     }
 
     if (c == '\n')
-        uart_tx_enqueue_blocking('\r');
-    uart_tx_enqueue_blocking(c);
+        uart_tx_enqueue('\r');
+    uart_tx_enqueue(c);
 }
 
 /* Write a null-terminated string */
@@ -364,8 +342,6 @@ void uart_irq_init(void) {
     rb_init(&g_rx_rb);
     rb_init(&g_tx_rb);
     uart_irq_mode = 1;
-    uart_rx_irq_seen = 0;
-    uart_tx_irq_seen = 0;
 
     /* Common 16550-style FIFO init value:
      * bit0 = enable FIFO
@@ -373,6 +349,7 @@ void uart_irq_init(void) {
      * bit2 = clear TX FIFO
      */
     uart_write_reg(uart_iir_off(), 0x07U);
+    uart_write_reg(uart_mcr_off(), uart_read_reg(uart_mcr_off()) | MCR_OUT2);
     uart_enable_rx_irq();
     uart_disable_tx_irq();
 }
@@ -392,7 +369,6 @@ void uart_irq_handler(void) {
          */
         if (iir == 0x04U || iir == 0x0CU || iir == 0x06U) {
             char c;
-            uart_rx_irq_seen = 1;
             while (uart_try_hw_getc(&c)) {
                 if (!rb_push(&g_rx_rb, c))
                     break;
@@ -403,8 +379,6 @@ void uart_irq_handler(void) {
         /* 0x02: TX holding register empty, so feed the next queued bytes. */
         if (iir == 0x02U) {
             unsigned long flags = irq_save();
-
-            uart_tx_irq_seen = 1;
             uart_tx_kick_locked();
             irq_restore(flags);
             continue;
