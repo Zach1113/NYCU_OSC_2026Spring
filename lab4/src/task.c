@@ -20,6 +20,7 @@ static struct task_item *g_ready_head;
 static unsigned long g_task_seq;
 static int g_priority_stack[MAX_NESTED_TASKS];
 static int g_task_depth;
+static int priority_set[4];
 
 static unsigned long irq_save(void) {
     unsigned long sstatus;
@@ -47,14 +48,6 @@ static int outranks(const struct task_item *a, const struct task_item *b) {
     if (a->priority != b->priority)
         return a->priority > b->priority;
     return a->seq < b->seq;
-}
-
-static void test_task_cb(void *arg) {
-    const char *priority = (const char *)arg;
-
-    uart_puts("[Task] Executing Priority ");
-    uart_puts(priority ? priority : "(null)");
-    uart_putc('\n');
 }
 
 void task_init(void) {
@@ -145,14 +138,51 @@ void task_run_ready(void) {
     irq_restore(outer_flags);
 }
 
-int task_enqueue_demo_batch(void) {
-    if (!add_task(test_task_cb, "1", 1))
-        return 0;
-    if (!add_task(test_task_cb, "3", 3))
-        return 0;
-    if (!add_task(test_task_cb, "5", 5))
-        return 0;
-    if (!add_task(test_task_cb, "2", 2))
-        return 0;
-    return 1;
+void p1_callback() {
+ 
+    uart_puts("P1 start\n");
+    uart_puts("P1 end\n");
+}
+
+void p3_callback() {
+
+    uart_puts("P3 start\n");
+    add_task(p1_callback, 0, priority_set[0]);
+    task_run_ready();
+    uart_puts("P3 end\n");
+}
+
+void p2_callback() {
+
+    uart_puts("P2 start\n");
+    add_task(p3_callback, 0, priority_set[2]);
+    task_run_ready();
+    uart_puts("P2 end\n");
+}
+
+void p4_callback() {
+
+    uart_puts("P4 start\n");
+    add_task(p2_callback, 0, priority_set[1]);
+    task_run_ready();
+    uart_puts("P4 end\n");
+}
+
+void test_func(void) {
+    int from_small_to_big = 0;
+
+    if (from_small_to_big) {
+        priority_set[0] = 10;
+        priority_set[1] = 20;
+        priority_set[2] = 30;
+        priority_set[3] = 40;
+    } else {
+        priority_set[0] = 40;
+        priority_set[1] = 30;
+        priority_set[2] = 20;
+        priority_set[3] = 10;
+    }
+
+    if (!add_task(p4_callback, 0, priority_set[3]))
+        uart_puts("taskbatch: task queue full\n");
 }

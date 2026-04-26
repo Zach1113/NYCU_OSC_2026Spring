@@ -278,9 +278,7 @@ static void cmd_set_timeout(const char *arg) {
 }
 
 static void cmd_taskbatch(void) {
-    if (!task_enqueue_demo_batch()) {
-        uart_puts("taskbatch: task queue full\n");
-    }
+    test_func();
 }
 
 static void shell_execute_command(char *buf) {
