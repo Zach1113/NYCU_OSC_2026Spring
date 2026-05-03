@@ -3,12 +3,13 @@
 #include "uart.h"
 #include "mm.h"
 #include "plic.h"
+#include "sched.h"
 #include "timer.h"
 #include "trap.h"
 #include "task.h"
+#include "video.h"
 
 #define SBI_EXT_BASE  0x10
-#define USER_STACK_SIZE 4096UL
 #define SIE_SEIE (1UL << 9)
 #define SSTATUS_SIE (1UL << 1)
 
@@ -130,6 +131,7 @@ static void cmd_help(void) {
     uart_puts("  heartbeat - Toggle 2-second timer print (usage: heartbeat on|off)\n");
     uart_puts("  setTimeout - Print a message later (usage: setTimeout <sec> <msg>)\n");
     uart_puts("  taskbatch - Queue spec-style demo tasks with priorities 1/3/5\n");
+    uart_puts("  threadtest - Create three round-robin kernel threads\n");
 }
 
 static void cmd_hello(void) {
@@ -194,40 +196,14 @@ static void cmd_heartbeat(const char *arg) {
 }
 
 static void cmd_exec(const char *name) {
-    const void *prog = 0;
-    unsigned long prog_size = 0;
-    static void *user_stack;
-    const char *prog_name = name && *name ? name : "prog.bin";
-    unsigned long user_sp;
-    int ret;
+    const char *prog_name = name && *name ? name : "osctest.bin";
 
-    if (!cpio_find(prog_name, &prog, &prog_size)) {
+    if (!user_process_create_from_file(prog_name)) {
         uart_puts("exec: file not found: ");
         uart_puts(prog_name);
         uart_putc('\n');
         return;
     }
-
-    if (!user_stack) {
-        user_stack = alloc(USER_STACK_SIZE);
-        if (!user_stack) {
-            uart_puts("exec: failed to allocate user stack\n");
-            return;
-        }
-    }
-
-    user_sp = (unsigned long)user_stack + USER_STACK_SIZE;
-
-    uart_puts("exec: entering U-mode at ");
-    uart_hex((unsigned long)prog);
-    uart_puts(" size=");
-    uart_hex(prog_size);
-    uart_putc('\n');
-
-    ret = run_user_program((unsigned long)prog, user_sp);
-    uart_puts("exec: user program returned with code ");
-    uart_dec((unsigned long)ret);
-    uart_putc('\n');
 }
 
 static void cmd_set_timeout(const char *arg) {
@@ -281,6 +257,10 @@ static void cmd_taskbatch(void) {
     test_func();
 }
 
+static void cmd_threadtest(void) {
+    scheduler_thread_test();
+}
+
 static void shell_execute_command(char *buf) {
     if (streq(buf, "help"))
         cmd_help();
@@ -325,6 +305,9 @@ static void shell_execute_command(char *buf) {
     else if (streq(buf, "taskbatch")) {
         cmd_taskbatch();
     }
+    else if (streq(buf, "threadtest")) {
+        cmd_threadtest();
+    }
     else if (buf[0] != '\0') {
         uart_puts("Unknown command: ");
         uart_puts(buf);
@@ -365,6 +348,22 @@ static void shell_poll_once(char *line_buf, int *line_len, int max_len, int *nee
     }
 }
 
+static void kernel_shell_thread(void) {
+    char buf[128];
+    int line_len = 0;
+    int need_prompt = 1;
+
+    while (1) {
+        if (!scheduler_foreground_active())
+            shell_poll_once(buf, &line_len, (int)sizeof(buf), &need_prompt);
+        else {
+            line_len = 0;
+            need_prompt = 1;
+        }
+        schedule();
+    }
+}
+
 void start_kernel(unsigned long hartid, const void *fdt) {
     (void)hartid;
     uart_init_from_dtb(fdt);
@@ -379,6 +378,8 @@ void start_kernel(unsigned long hartid, const void *fdt) {
     plic_set_priority(uart_irq_number(), 1);
     plic_enable_irq(uart_irq_number());
     task_init();
+    scheduler_init();
+    video_init();
     uart_irq_init();
     enable_supervisor_external_interrupts();
     timer_init();
@@ -386,12 +387,12 @@ void start_kernel(unsigned long hartid, const void *fdt) {
     uart_puts("\nNYCU OSC2026 RISC-V Kernel\n");
     uart_puts("Type 'help' for available commands.\n\n");
 
-    char buf[128];
-    int line_len = 0;
-    int need_prompt = 1;
+    if (!thread_create(kernel_shell_thread))
+        uart_puts("failed to create kernel shell thread\n");
 
     while (1) {
+        kill_zombies();
         task_run_ready();
-        shell_poll_once(buf, &line_len, (int)sizeof(buf), &need_prompt);
+        schedule();
     }
 }

@@ -11,6 +11,7 @@ void uart_read_exact(void *dst, unsigned long n, unsigned long *sum);
 char uart_getc(void);
 void uart_putc(char c);
 void uart_puts(const char *s);
+void uart_write_atomic(const char *s, unsigned long n);
 void uart_irq_init(void);
 void uart_irq_handler(void);
 void uart_dec(unsigned long v);

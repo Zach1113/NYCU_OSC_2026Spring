@@ -1,5 +1,5 @@
-#ifndef LAB4_TRAP_H
-#define LAB4_TRAP_H
+#ifndef LAB5_TRAP_H
+#define LAB5_TRAP_H
 
 struct trapframe {
     unsigned long ra;
@@ -35,11 +35,11 @@ struct trapframe {
     unsigned long t6;
     unsigned long sepc;
     unsigned long sstatus;
-    unsigned long reserved;
+    unsigned long scause;
+    unsigned long stval;
 };
 
 void trap_init(void);
 void trap_handler(struct trapframe *tf);
-int run_user_program(unsigned long entry, unsigned long user_sp);
 
 #endif

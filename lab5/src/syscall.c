@@ -1,0 +1,395 @@
+#include "syscall.h"
+
+#include "cpio.h"
+#include "mm.h"
+#include "sched.h"
+#include "timer.h"
+#include "uart.h"
+#include "video.h"
+
+#define SYS_GETPID     0UL
+#define SYS_UART_READ  1UL
+#define SYS_UART_WRITE 2UL
+#define SYS_EXEC       3UL
+#define SYS_FORK       4UL
+#define SYS_WAITPID    5UL
+#define SYS_EXIT       6UL
+#define SYS_STOP       7UL
+#define SYS_DISPLAY    8UL
+#define SYS_USLEEP     9UL
+
+extern void ret_from_exception(void);
+
+static int g_uart_line_owner = -1;
+
+static unsigned long irq_save(void) {
+    unsigned long sstatus;
+
+    asm volatile("csrr %0, sstatus" : "=r"(sstatus));
+    asm volatile("csrci sstatus, 2");
+    return sstatus;
+}
+
+static void irq_restore(unsigned long sstatus) {
+    asm volatile("csrw sstatus, %0" : : "r"(sstatus));
+}
+
+static void irq_enable(void) {
+    asm volatile("csrsi sstatus, 2");
+}
+
+static void zero_bytes(void *ptr, unsigned long len) {
+    unsigned char *p = (unsigned char *)ptr;
+
+    while (len--)
+        *p++ = 0;
+}
+
+static unsigned long adjust_stack_value(unsigned long value,
+                                        unsigned long old_base,
+                                        unsigned long new_base) {
+    if (value >= old_base && value < old_base + USER_STACK_SIZE)
+        return value + (new_base - old_base);
+    return value;
+}
+
+static void syscall_getpid(struct trapframe *tf) {
+    tf->a0 = (unsigned long)get_current()->pid;
+    tf->sepc += 4;
+}
+
+static int uart_write_completes_line(const char *buf, unsigned long count) {
+    unsigned long i;
+
+    if (count == 2 && buf[0] == '$' && buf[1] == ' ')
+        return 1;
+
+    for (i = 0; i < count; i++) {
+        if (buf[i] == '\n' || buf[i] == '\r')
+            return 1;
+    }
+    return 0;
+}
+
+static void uart_release_owner(int pid) {
+    unsigned long flags = irq_save();
+
+    if (g_uart_line_owner == pid)
+        g_uart_line_owner = -1;
+    irq_restore(flags);
+}
+
+static void uart_wait_for_line_owner(int pid) {
+    while (1) {
+        unsigned long flags = irq_save();
+        struct thread *owner;
+
+        if (g_uart_line_owner == -1 || g_uart_line_owner == pid) {
+            g_uart_line_owner = pid;
+            irq_restore(flags);
+            return;
+        }
+
+        owner = scheduler_find(g_uart_line_owner);
+        if (!owner || owner->status == THREAD_TERMINATED) {
+            g_uart_line_owner = pid;
+            irq_restore(flags);
+            return;
+        }
+
+        irq_restore(flags);
+        irq_enable();
+        schedule();
+    }
+}
+
+static void syscall_uart_read(struct trapframe *tf) {
+    char *buf = (char *)tf->a0;
+    long count = (long)tf->a1;
+    long i;
+    int pid = get_current()->pid;
+
+    if (!buf || count < 0) {
+        tf->a0 = (unsigned long)-1L;
+        tf->sepc += 4;
+        return;
+    }
+
+    /*
+     * User shells often print prompts without a trailing newline before
+     * blocking for input. Do not let such prompt fragments keep the
+     * line-output lock and starve child process output/video startup.
+     */
+    uart_release_owner(pid);
+
+    for (i = 0; i < count; i++) {
+        char c;
+
+        while (!uart_getc_nonblock(&c)) {
+            irq_enable();
+            schedule();
+        }
+        buf[i] = c;
+    }
+
+    tf->a0 = (unsigned long)count;
+    tf->sepc += 4;
+}
+
+static void syscall_uart_write(struct trapframe *tf) {
+    const char *buf = (const char *)tf->a0;
+    long count = (long)tf->a1;
+    int pid = get_current()->pid;
+
+    if (!buf || count < 0) {
+        tf->a0 = (unsigned long)-1L;
+        tf->sepc += 4;
+        return;
+    }
+
+    if (count == 0) {
+        tf->a0 = 0;
+        tf->sepc += 4;
+        return;
+    }
+
+    uart_wait_for_line_owner(pid);
+    uart_write_atomic(buf, (unsigned long)count);
+    if (uart_write_completes_line(buf, (unsigned long)count))
+        uart_release_owner(pid);
+
+    tf->a0 = (unsigned long)count;
+    tf->sepc += 4;
+}
+
+static void syscall_exec(struct trapframe *tf) {
+    const char *path = (const char *)tf->a0;
+    const void *prog = 0;
+    unsigned long size = 0;
+    struct thread *current = get_current();
+    unsigned long new_stack;
+
+    if (!path || !cpio_find(path, &prog, &size)) {
+        tf->a0 = (unsigned long)-1L;
+        tf->sepc += 4;
+        return;
+    }
+
+    new_stack = (unsigned long)alloc(USER_STACK_SIZE);
+    if (!new_stack) {
+        tf->a0 = (unsigned long)-1L;
+        tf->sepc += 4;
+        return;
+    }
+
+    if (current->user_stack)
+        free((void *)current->user_stack);
+    current->user_stack = new_stack;
+
+    zero_bytes(tf, sizeof(*tf));
+    tf->tp = (unsigned long)current;
+    tf->sp = current->user_stack + USER_STACK_SIZE;
+    tf->sepc = (unsigned long)prog;
+    tf->sstatus = (1UL << 5) | (1UL << 18);
+}
+
+static void syscall_fork(struct trapframe *tf) {
+    struct thread *parent = get_current();
+    struct thread *child;
+    struct trapframe *child_tf;
+    unsigned long kernel_offset;
+    unsigned long user_offset;
+
+    child = (struct thread *)alloc(sizeof(*child));
+    if (!child) {
+        tf->a0 = (unsigned long)-1L;
+        tf->sepc += 4;
+        return;
+    }
+
+    scheduler_copy_bytes(child, parent, sizeof(*child));
+    child->kernel_stack = (unsigned long)alloc(KERNEL_STACK_SIZE);
+    child->user_stack = (unsigned long)alloc(USER_STACK_SIZE);
+    if (!child->kernel_stack || !child->user_stack) {
+        if (child->kernel_stack)
+            free((void *)child->kernel_stack);
+        if (child->user_stack)
+            free((void *)child->user_stack);
+        free(child);
+        tf->a0 = (unsigned long)-1L;
+        tf->sepc += 4;
+        return;
+    }
+
+    scheduler_copy_bytes((void *)child->kernel_stack,
+                         (const void *)parent->kernel_stack,
+                         KERNEL_STACK_SIZE);
+    scheduler_copy_bytes((void *)child->user_stack,
+                         (const void *)parent->user_stack,
+                         USER_STACK_SIZE);
+
+    child->pid = scheduler_next_pid();
+    child->status = THREAD_READY;
+    child->parent = parent;
+    child->waiting_pid = -1;
+
+    kernel_offset = child->kernel_stack - parent->kernel_stack;
+    user_offset = child->user_stack - parent->user_stack;
+    child_tf = (struct trapframe *)((unsigned long)tf + kernel_offset);
+
+    child_tf->a0 = 0;
+    child_tf->tp = (unsigned long)child;
+    child_tf->sepc += 4;
+    child_tf->sp = adjust_stack_value(child_tf->sp,
+                                      parent->user_stack,
+                                      child->user_stack);
+    child_tf->s0 = adjust_stack_value(child_tf->s0,
+                                      parent->user_stack,
+                                      child->user_stack);
+    (void)user_offset;
+
+    child->context.ra = (unsigned long)ret_from_exception;
+    child->context.sp = (unsigned long)child_tf;
+    child->next = 0;
+
+    scheduler_enqueue_existing(child);
+
+    tf->a0 = (unsigned long)child->pid;
+    tf->sepc += 4;
+}
+
+static void syscall_waitpid(struct trapframe *tf) {
+    int pid = (int)tf->a0;
+    struct thread *current = get_current();
+    struct thread *target = scheduler_find(pid);
+
+    if (!target || scheduler_is_idle(target)) {
+        tf->a0 = (unsigned long)-1L;
+        tf->sepc += 4;
+        return;
+    }
+
+    if (target->status != THREAD_TERMINATED) {
+        current->status = THREAD_WAITING;
+        current->waiting_pid = pid;
+        schedule();
+    }
+
+    target = scheduler_find(pid);
+    if (target && target->status == THREAD_TERMINATED)
+        target->parent = 0;
+
+    tf->a0 = (unsigned long)pid;
+    tf->sepc += 4;
+}
+
+static void syscall_exit(struct trapframe *tf) {
+    (void)tf;
+    uart_release_owner(get_current()->pid);
+    thread_exit();
+}
+
+static void syscall_stop(struct trapframe *tf) {
+    int pid = (int)tf->a0;
+    struct thread *target = scheduler_find(pid);
+
+    if (!target || scheduler_is_idle(target)) {
+        tf->a0 = (unsigned long)-1L;
+        tf->sepc += 4;
+        return;
+    }
+
+    uart_release_owner(target->pid);
+    target->status = THREAD_TERMINATED;
+    scheduler_wake_parent_of(target);
+    if (target == get_current())
+        thread_exit();
+
+    tf->a0 = 0;
+    tf->sepc += 4;
+}
+
+static void syscall_display(struct trapframe *tf) {
+    irq_enable();
+    video_display((unsigned int *)tf->a0,
+                  (unsigned int)tf->a1,
+                  (unsigned int)tf->a2);
+    tf->sepc += 4;
+    schedule();
+}
+
+static unsigned long long usec_to_ticks(unsigned int usec) {
+    unsigned long long hz = timer_timebase_hz();
+    unsigned long long whole = (unsigned long long)(usec / 1000000U) * hz;
+    unsigned long long frac = ((unsigned long long)(usec % 1000000U) * hz) /
+                              1000000ULL;
+
+    return whole + frac;
+}
+
+static void syscall_usleep(struct trapframe *tf) {
+    unsigned int usec = (unsigned int)tf->a0;
+    unsigned long long wait_ticks = usec_to_ticks(usec);
+    unsigned long long start = timer_now();
+    struct thread *current = get_current();
+
+    if (usec == 0) {
+        tf->a0 = 0;
+        tf->sepc += 4;
+        return;
+    }
+
+    if (wait_ticks == 0)
+        wait_ticks = 1;
+
+    while (timer_now() - start < wait_ticks) {
+        current->wake_time = start + wait_ticks;
+        current->status = THREAD_SLEEPING;
+        schedule();
+    }
+
+    tf->a0 = 0;
+    tf->sepc += 4;
+}
+
+void syscall_handle(struct trapframe *tf) {
+    switch (tf->a7) {
+    case SYS_GETPID:
+        syscall_getpid(tf);
+        break;
+    case SYS_UART_READ:
+        syscall_uart_read(tf);
+        break;
+    case SYS_UART_WRITE:
+        syscall_uart_write(tf);
+        break;
+    case SYS_EXEC:
+        syscall_exec(tf);
+        break;
+    case SYS_FORK:
+        syscall_fork(tf);
+        break;
+    case SYS_WAITPID:
+        syscall_waitpid(tf);
+        break;
+    case SYS_EXIT:
+        syscall_exit(tf);
+        break;
+    case SYS_STOP:
+        syscall_stop(tf);
+        break;
+    case SYS_DISPLAY:
+        syscall_display(tf);
+        break;
+    case SYS_USLEEP:
+        syscall_usleep(tf);
+        break;
+    default:
+        uart_puts("[syscall] unknown syscall: ");
+        uart_dec(tf->a7);
+        uart_putc('\n');
+        tf->a0 = (unsigned long)-1L;
+        tf->sepc += 4;
+        break;
+    }
+}

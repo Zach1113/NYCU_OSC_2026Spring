@@ -12,7 +12,7 @@
 #define SSTATUS_SIE       (1UL << 1) // Supervisor Interrupt Enable
 
 #define DEFAULT_TIMEBASE_HZ 24000000ULL
-#define PERIOD_SECONDS       2ULL
+#define SCHED_TICK_HZ        32ULL
 #define MAX_TIMERS           32
 #define TIMER_TASK_PRIORITY  1
 
@@ -35,7 +35,8 @@ static unsigned long long g_boot_time;
 static unsigned long long g_periodic_next_fire;
 static unsigned long long g_programmed_fire;
 static int g_timer_warned;
-static int g_periodic_timer_enabled = 1;
+static int g_periodic_timer_enabled;
+static unsigned long g_last_print_sec;
 static unsigned long g_timer_seq;
 static struct timer_entry g_timers[MAX_TIMERS];
 static struct timer_entry *g_timer_head;
@@ -101,7 +102,9 @@ static void sbi_set_timer(unsigned long long stime_value) {
 }
 
 static unsigned long long timer_period_ticks(void) {
-    return g_timebase_hz * PERIOD_SECONDS;
+    unsigned long long ticks = g_timebase_hz / SCHED_TICK_HZ;
+
+    return ticks ? ticks : 1ULL;
 }
 
 static void enable_timer_interrupts(void) {
@@ -171,6 +174,10 @@ unsigned long long timer_now(void) {
     return t;
 }
 
+unsigned long long timer_timebase_hz(void) {
+    return g_timebase_hz;
+}
+
 unsigned long timer_seconds_since_boot(void) {
     unsigned long long now = timer_now();
 
@@ -210,7 +217,8 @@ void timer_init(void) {
     g_periodic_next_fire = g_boot_time + timer_period_ticks();
     g_programmed_fire = g_periodic_next_fire;
     g_timer_warned = 0;
-    g_periodic_timer_enabled = 1;
+    g_periodic_timer_enabled = 0;
+    g_last_print_sec = (unsigned long)-1L;
     g_timer_seq = 0;
     g_timer_head = 0;
     for (i = 0; i < MAX_TIMERS; i++) {
@@ -276,8 +284,11 @@ void timer_handle_interrupt(void) {
         if (g_periodic_timer_enabled) {
             if (g_timebase_hz != 0)
                 sec = (g_periodic_next_fire - g_boot_time) / g_timebase_hz;
-            if (!add_task(timer_periodic_print_task, (void *)(unsigned long)sec, 0))
-                timer_periodic_print_task((void *)(unsigned long)sec);
+            if ((unsigned long)sec != g_last_print_sec) {
+                g_last_print_sec = (unsigned long)sec;
+                if (!add_task(timer_periodic_print_task, (void *)(unsigned long)sec, 0))
+                    timer_periodic_print_task((void *)(unsigned long)sec);
+            }
         }
         g_periodic_next_fire += timer_period_ticks();
     }

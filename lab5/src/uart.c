@@ -205,6 +205,17 @@ static void uart_tx_enqueue(char c) {
     }
 }
 
+static void uart_flush_tx_poll_locked(void) {
+    char c;
+
+    while (!rb_empty(&g_tx_rb)) {
+        while (!uart_try_hw_putc_raw(g_tx_rb.buf[g_tx_rb.head]))
+            ;
+        rb_pop(&g_tx_rb, &c);
+    }
+    uart_disable_tx_irq();
+}
+
 void uart_init_from_dtb(const void *fdt) {
     int off;
     int len = 0;
@@ -332,10 +343,30 @@ void uart_putc(char c) {
     uart_tx_enqueue(c);
 }
 
+void uart_write_atomic(const char *s, unsigned long n) {
+    unsigned long flags;
+    unsigned long i;
+
+    if (!s)
+        return;
+
+    flags = irq_save();
+    if (uart_irq_mode)
+        uart_flush_tx_poll_locked();
+
+    for (i = 0; i < n; i++)
+        uart_putc_poll(s[i]);
+
+    irq_restore(flags);
+}
+
 /* Write a null-terminated string */
 void uart_puts(const char *s) {
-    while (*s)
-        uart_putc(*s++);
+    unsigned long len = 0;
+
+    while (s && s[len])
+        len++;
+    uart_write_atomic(s, len);
 }
 
 void uart_irq_init(void) {
