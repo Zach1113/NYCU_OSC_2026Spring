@@ -17,10 +17,20 @@
 #define SYS_STOP       7UL
 #define SYS_DISPLAY    8UL
 #define SYS_USLEEP     9UL
+#define SYS_SIGNAL     10UL
+#define SYS_SIGRETURN  11UL
+#define SYS_KILL       12UL
+
+#define SSTATUS_SPP    (1UL << 8)
+#define SIGRETURN_INST_ADD_A7 0x00b00893U
+#define SIGRETURN_INST_ECALL  0x00000073U
+#define SIGRETURN_INST_LOOP   0x0000006fU
 
 extern void ret_from_exception(void);
 
 static int g_uart_line_owner = -1;
+
+static void uart_release_owner(int pid);
 
 static unsigned long irq_save(void) {
     unsigned long sstatus;
@@ -51,6 +61,58 @@ static unsigned long adjust_stack_value(unsigned long value,
     if (value >= old_base && value < old_base + USER_STACK_SIZE)
         return value + (new_base - old_base);
     return value;
+}
+
+static int valid_signum(int signum) {
+    return signum > 0 && signum < MAX_SIGNALS;
+}
+
+static void clear_signal_runtime(struct thread *t) {
+    if (!t)
+        return;
+
+    t->pending_signals = 0;
+    t->signal_active = 0;
+    zero_bytes(&t->signal_saved_tf, sizeof(t->signal_saved_tf));
+    if (t->signal_stack) {
+        free((void *)t->signal_stack);
+        t->signal_stack = 0;
+    }
+}
+
+static int next_pending_signal(struct thread *t) {
+    int signum;
+
+    if (!t)
+        return 0;
+
+    for (signum = 1; signum < MAX_SIGNALS; signum++) {
+        if (t->pending_signals & (1UL << signum))
+            return signum;
+    }
+    return 0;
+}
+
+static void make_signal_target_runnable(struct thread *t) {
+    if (!t)
+        return;
+
+    if (t->status == THREAD_SLEEPING || t->status == THREAD_WAITING) {
+        t->status = THREAD_READY;
+        t->wake_time = 0;
+        t->waiting_pid = -1;
+    }
+}
+
+static void terminate_thread_for_signal(struct thread *t) {
+    if (!t || !t->is_user || scheduler_is_idle(t))
+        return;
+
+    uart_release_owner(t->pid);
+    t->status = THREAD_TERMINATED;
+    scheduler_wake_parent_of(t);
+    if (t == get_current())
+        thread_exit();
 }
 
 static void syscall_getpid(struct trapframe *tf) {
@@ -184,6 +246,7 @@ static void syscall_exec(struct trapframe *tf) {
 
     if (current->user_stack)
         free((void *)current->user_stack);
+    clear_signal_runtime(current);
     current->user_stack = new_stack;
 
     zero_bytes(tf, sizeof(*tf));
@@ -191,6 +254,7 @@ static void syscall_exec(struct trapframe *tf) {
     tf->sp = current->user_stack + USER_STACK_SIZE;
     tf->sepc = (unsigned long)prog;
     tf->sstatus = (1UL << 5) | (1UL << 18);
+    tf->a0 = 0;
 }
 
 static void syscall_fork(struct trapframe *tf) {
@@ -232,6 +296,10 @@ static void syscall_fork(struct trapframe *tf) {
     child->status = THREAD_READY;
     child->parent = parent;
     child->waiting_pid = -1;
+    child->pending_signals = 0;
+    child->signal_active = 0;
+    child->signal_stack = 0;
+    zero_bytes(&child->signal_saved_tf, sizeof(child->signal_saved_tf));
 
     kernel_offset = child->kernel_stack - parent->kernel_stack;
     user_offset = child->user_stack - parent->user_stack;
@@ -342,7 +410,7 @@ static void syscall_usleep(struct trapframe *tf) {
     if (wait_ticks == 0)
         wait_ticks = 1;
 
-    while (timer_now() - start < wait_ticks) {
+    while (timer_now() - start < wait_ticks && !current->pending_signals) {
         current->wake_time = start + wait_ticks;
         current->status = THREAD_SLEEPING;
         schedule();
@@ -350,6 +418,115 @@ static void syscall_usleep(struct trapframe *tf) {
 
     tf->a0 = 0;
     tf->sepc += 4;
+}
+
+static void syscall_signal(struct trapframe *tf) {
+    int signum = (int)tf->a0;
+    unsigned long handler = tf->a1;
+    struct thread *current = get_current();
+    unsigned long old_handler;
+
+    if (!valid_signum(signum) || !current || !current->is_user) {
+        tf->a0 = (unsigned long)-1L;
+        tf->sepc += 4;
+        return;
+    }
+
+    old_handler = current->signal_handlers[signum];
+    current->signal_handlers[signum] = handler;
+
+    tf->a0 = old_handler;
+    tf->sepc += 4;
+}
+
+static void syscall_sigreturn(struct trapframe *tf) {
+    struct thread *current = get_current();
+    unsigned long signal_stack;
+
+    if (!current || !current->is_user || !current->signal_active) {
+        tf->a0 = (unsigned long)-1L;
+        tf->sepc += 4;
+        return;
+    }
+
+    uart_puts("[Signal] sigreturn\n");
+
+    signal_stack = current->signal_stack;
+    scheduler_copy_bytes(tf, &current->signal_saved_tf, sizeof(*tf));
+    current->signal_active = 0;
+    current->signal_stack = 0;
+    zero_bytes(&current->signal_saved_tf, sizeof(current->signal_saved_tf));
+
+    if (signal_stack)
+        free((void *)signal_stack);
+}
+
+static void syscall_kill(struct trapframe *tf) {
+    int pid = (int)tf->a0;
+    int signum = (int)tf->a1;
+    struct thread *target = scheduler_find(pid);
+
+    if (!valid_signum(signum) || !target || !target->is_user ||
+        scheduler_is_idle(target) || target->status == THREAD_TERMINATED) {
+        tf->a0 = (unsigned long)-1L;
+        tf->sepc += 4;
+        return;
+    }
+
+    if (target->signal_handlers[signum]) {
+        target->pending_signals |= 1UL << signum;
+        make_signal_target_runnable(target);
+    } else {
+        terminate_thread_for_signal(target);
+    }
+
+    tf->a0 = 0;
+    tf->sepc += 4;
+}
+
+void signal_deliver(struct trapframe *tf) {
+    struct thread *current = get_current();
+    unsigned int *trampoline;
+    unsigned long stack;
+    int signum;
+
+    if (!tf || !current || !current->is_user)
+        return;
+    if (tf->sstatus & SSTATUS_SPP)
+        return;
+    if (current->signal_active)
+        return;
+
+    signum = next_pending_signal(current);
+    if (!signum)
+        return;
+
+    if (!current->signal_handlers[signum]) {
+        current->pending_signals &= ~(1UL << signum);
+        terminate_thread_for_signal(current);
+        return;
+    }
+
+    stack = (unsigned long)alloc(USER_STACK_SIZE);
+    if (!stack)
+        return;
+
+    current->pending_signals &= ~(1UL << signum);
+    current->signal_active = 1;
+    current->signal_stack = stack;
+    scheduler_copy_bytes(&current->signal_saved_tf, tf, sizeof(*tf));
+
+    trampoline = (unsigned int *)stack;
+    trampoline[0] = SIGRETURN_INST_ADD_A7;
+    trampoline[1] = SIGRETURN_INST_ECALL;
+    trampoline[2] = SIGRETURN_INST_LOOP;
+    asm volatile("fence.i" ::: "memory");
+
+    tf->ra = stack;
+    tf->sp = stack + USER_STACK_SIZE;
+    tf->sepc = current->signal_handlers[signum];
+    tf->a0 = (unsigned long)signum;
+    tf->tp = (unsigned long)current;
 }
 
 void syscall_handle(struct trapframe *tf) {
@@ -383,6 +560,15 @@ void syscall_handle(struct trapframe *tf) {
         break;
     case SYS_USLEEP:
         syscall_usleep(tf);
+        break;
+    case SYS_SIGNAL:
+        syscall_signal(tf);
+        break;
+    case SYS_SIGRETURN:
+        syscall_sigreturn(tf);
+        break;
+    case SYS_KILL:
+        syscall_kill(tf);
         break;
     default:
         uart_puts("[syscall] unknown syscall: ");

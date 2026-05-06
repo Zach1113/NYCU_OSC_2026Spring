@@ -97,6 +97,9 @@ kernel_trap_vector:
     call trap_handler
 
 ret_from_exception:
+    mv a0, sp
+    call signal_deliver
+
     ld t0, TF_SSTATUS(sp)
     andi t0, t0, SSTATUS_SPP
     bnez t0, .Lrestore_context

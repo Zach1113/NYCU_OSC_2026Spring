@@ -281,6 +281,8 @@ void kill_zombies(void) {
                 free((void *)dead->kernel_stack);
             if (dead->user_stack)
                 free((void *)dead->user_stack);
+            if (dead->signal_stack)
+                free((void *)dead->signal_stack);
             free(dead);
             continue;
         }
@@ -341,11 +343,35 @@ static void thread_test_fn(void) {
     int i;
 
     for (i = 0; i < 5; i++) {
-        uart_puts("Thread id: ");
-        uart_dec((unsigned long)get_current()->pid);
-        uart_puts(" ");
-        uart_dec((unsigned long)i);
-        uart_putc('\n');
+        char line[32];
+        unsigned long pid = (unsigned long)get_current()->pid;
+        char digits[21];
+        int pos = 0;
+        int dpos = 0;
+
+        line[pos++] = 'T';
+        line[pos++] = 'h';
+        line[pos++] = 'r';
+        line[pos++] = 'e';
+        line[pos++] = 'a';
+        line[pos++] = 'd';
+        line[pos++] = ' ';
+        line[pos++] = 'i';
+        line[pos++] = 'd';
+        line[pos++] = ':';
+        line[pos++] = ' ';
+        if (pid == 0)
+            digits[dpos++] = '0';
+        while (pid > 0) {
+            digits[dpos++] = (char)('0' + pid % 10UL);
+            pid /= 10UL;
+        }
+        while (dpos > 0)
+            line[pos++] = digits[--dpos];
+        line[pos++] = ' ';
+        line[pos++] = (char)('0' + i);
+        line[pos++] = '\n';
+        uart_write_atomic(line, (unsigned long)pos);
         for (volatile int j = 0; j < 100000000; j++)
             ;
         schedule();
@@ -354,10 +380,37 @@ static void thread_test_fn(void) {
 
 void scheduler_thread_test(void) {
     int i;
+    int pid[3];
 
     for (i = 0; i < 3; i++) {
-        if (!thread_create(thread_test_fn))
+        struct thread *t = thread_create(thread_test_fn);
+
+        if (!t) {
             uart_puts("threadtest: thread_create failed\n");
+            pid[i] = -1;
+            continue;
+        }
+        pid[i] = t->pid;
+    }
+
+    while (1) {
+        int live = 0;
+
+        for (i = 0; i < 3; i++) {
+            struct thread *t;
+
+            if (pid[i] < 0)
+                continue;
+            t = scheduler_find(pid[i]);
+            if (t && t->status != THREAD_TERMINATED) {
+                live = 1;
+                break;
+            }
+        }
+
+        if (!live)
+            break;
+        schedule();
     }
 }
 

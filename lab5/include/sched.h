@@ -5,6 +5,7 @@
 
 #define KERNEL_STACK_SIZE 0x8000UL
 #define USER_STACK_SIZE   0x8000UL
+#define MAX_SIGNALS       32
 
 enum thread_status {
     THREAD_RUNNING,
@@ -31,6 +32,11 @@ struct thread {
     struct thread *parent;
     int waiting_pid;
     unsigned long long wake_time;
+    unsigned long signal_handlers[MAX_SIGNALS];
+    unsigned long pending_signals;
+    int signal_active;
+    struct trapframe signal_saved_tf;
+    unsigned long signal_stack;
 };
 
 void scheduler_init(void);
