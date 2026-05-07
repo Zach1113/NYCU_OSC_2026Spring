@@ -383,7 +383,22 @@ Load this `user program <https://github.com/nycu-caslab/OSC2026/raw/main/uploads
 
 A snapshot of the user program:
 
-.. image:: /images/lab5_help.png
+.. code:: bash
+
+  opi-rv2> exec osctest.bin
+  process starts (pid = 3)
+  OSC test user program
+  $ help
+  help          Print this help message
+  pid           Print the current process ID
+  exec [prog]   Fork and execute a user program
+  fork_test     Run the fork test and exit this program
+  fork          Fork a child process to display a video
+  stop [pid]    Stop a process by its PID
+  signal        Register a signal handler for SIGTERM
+  kill [pid]    Send SIGTERM to a process by its PID
+  exit          Quit this program
+  $
 
 .. important::
 
