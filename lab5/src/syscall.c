@@ -517,9 +517,9 @@ void signal_deliver(struct trapframe *tf) {
     scheduler_copy_bytes(&current->signal_saved_tf, tf, sizeof(*tf));
 
     trampoline = (unsigned int *)stack;
-    trampoline[0] = SIGRETURN_INST_ADD_A7;
-    trampoline[1] = SIGRETURN_INST_ECALL;
-    trampoline[2] = SIGRETURN_INST_LOOP;
+    trampoline[0] = SIGRETURN_INST_ADD_A7; // addi a7, zero, 11
+    trampoline[1] = SIGRETURN_INST_ECALL;  // ecall
+    trampoline[2] = SIGRETURN_INST_LOOP;   // jal zero, 0
     asm volatile("fence.i" ::: "memory");
 
     tf->ra = stack;
