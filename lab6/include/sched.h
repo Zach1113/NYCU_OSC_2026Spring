@@ -26,8 +26,13 @@ struct thread {
     int pid;
     int is_user;
     enum thread_status status;
+    unsigned long pgd;
+    unsigned long pgd_pa;
     unsigned long kernel_stack;
     unsigned long user_stack;
+    unsigned long user_image;
+    unsigned long user_image_size;
+    unsigned long user_image_alloc_size;
     struct thread *next;
     struct thread *parent;
     int waiting_pid;
@@ -43,6 +48,9 @@ void scheduler_init(void);
 struct thread *thread_create(void (*fn)(void));
 struct thread *user_process_create(unsigned long entry);
 struct thread *user_process_create_from_file(const char *path);
+int user_address_space_init(struct thread *t, const void *prog,
+                            unsigned long size);
+void user_address_space_destroy(struct thread *t);
 struct thread *get_current(void);
 void schedule(void);
 void thread_exit(void);

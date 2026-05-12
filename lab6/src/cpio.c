@@ -1,6 +1,7 @@
 #include "cpio.h"
 #include "fdt.h"
 #include "uart.h"
+#include "vm.h"
 
 struct cpio_newc_header {
     char c_magic[6];
@@ -139,7 +140,8 @@ void cpio_init_from_dtb(const void *fdt) {
     if (!fdt_get_initrd_region(fdt, &start, &end))
         return;
 
-    cpio_set_archive((const void *)start, (const void *)end);
+    cpio_set_archive((const void *)phys_to_virt(start),
+                     (const void *)phys_to_virt(end));
 }
 
 int cpio_ready(void) {

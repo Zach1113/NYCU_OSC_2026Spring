@@ -1,20 +1,23 @@
 SECTIONS
 {
-    . = 0x00200000; /* 0x80200000 for QEMU and 0x00200000 for OrangePi */
+    KERNEL_OFFSET = 0xffffffc000000000;
+    KERNEL_LOAD_PA = 0x00200000;
+
+    . = KERNEL_OFFSET + KERNEL_LOAD_PA;
     _start = .;
 
-    .text : {
+    .text : AT(ADDR(.text) - KERNEL_OFFSET) {
         *(.text.boot)
-        *(.text)
+        *(.text .text.*)
     }
 
-    .rodata : { *(.rodata) }
+    .rodata : AT(ADDR(.rodata) - KERNEL_OFFSET) { *(.rodata .rodata.*) }
 
-    .data : { *(.data) }
+    .data : AT(ADDR(.data) - KERNEL_OFFSET) { *(.sdata .sdata.*) *(.data .data.*) }
 
-    .bss : {
+    .bss : AT(ADDR(.bss) - KERNEL_OFFSET) {
         __bss_start = .;
-        *(.sbss) *(.bss)
+        *(.sbss .sbss.*) *(.bss .bss.*) *(COMMON)
         __bss_stop = .;
     }
 

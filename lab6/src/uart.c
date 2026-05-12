@@ -5,6 +5,7 @@
 
 #include "fdt.h"
 #include "uart.h"
+#include "vm.h"
 
 /* ---- Platform selection ---- */
 // #define PLATFORM_QEMU
@@ -64,17 +65,26 @@ static int rb_pop(struct ring_buffer *rb, char *out) {
     return 1;
 }
 
+static unsigned long mmio_addr(unsigned long pa) {
+    unsigned long satp;
+
+    asm volatile("csrr %0, satp" : "=r"(satp));
+    if (satp >> 60)
+        return phys_to_virt(pa);
+    return pa;
+}
+
 static unsigned int uart_read_reg(unsigned long off) {
         if (uart_reg32)
-                return *(volatile unsigned int *)(uart_base + off);
-        return *(volatile unsigned char *)(uart_base + off);
+                return *(volatile unsigned int *)mmio_addr(uart_base + off);
+        return *(volatile unsigned char *)mmio_addr(uart_base + off);
 }
 
 static void uart_write_reg(unsigned long off, unsigned int v) {
         if (uart_reg32)
-                *(volatile unsigned int *)(uart_base + off) = v;
+                *(volatile unsigned int *)mmio_addr(uart_base + off) = v;
         else
-                *(volatile unsigned char *)(uart_base + off) = (unsigned char)v;
+                *(volatile unsigned char *)mmio_addr(uart_base + off) = (unsigned char)v;
 }
 
 /* Line Status Register:

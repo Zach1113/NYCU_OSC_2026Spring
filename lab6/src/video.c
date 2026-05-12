@@ -1,5 +1,7 @@
 #include "video.h"
 
+#include "vm.h"
+
 #define FB_WIDTH  1920U
 #define FB_HEIGHT 1080U
 
@@ -41,7 +43,7 @@ void video_init(void) {
 }
 
 void video_display(unsigned int *bmp_image, unsigned int width, unsigned int height) {
-    unsigned int *fb = (unsigned int *)FB_BASE;
+    unsigned int *fb = (unsigned int *)phys_to_virt(FB_BASE);
     unsigned int copy_w;
     unsigned int copy_h;
     unsigned int dst_x;

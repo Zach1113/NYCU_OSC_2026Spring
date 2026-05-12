@@ -3,6 +3,7 @@
 #include "cpio.h"
 #include "mm.h"
 #include "uart.h"
+#include "vm.h"
 
 #define SSTATUS_SPP  (1UL << 8)
 #define SSTATUS_SPIE (1UL << 5)
@@ -45,6 +46,87 @@ static void copy_bytes(void *dst, const void *src, unsigned long len) {
 
     while (len--)
         *d++ = *s++;
+}
+
+static unsigned long align_up(unsigned long value, unsigned long align) {
+    return (value + align - 1UL) & ~(align - 1UL);
+}
+
+int user_address_space_init(struct thread *t, const void *prog,
+                            unsigned long size) {
+    unsigned long image_size;
+
+    if (!t || !prog || size == 0)
+        return 0;
+
+    image_size = align_up(size, PAGE_SIZE);
+    if (image_size == 0)
+        image_size = PAGE_SIZE;
+
+    t->pgd = (unsigned long)vm_create_user_pgd();
+    if (!t->pgd)
+        return 0;
+    t->pgd_pa = virt_to_phys(t->pgd);
+
+    t->user_image = (unsigned long)alloc(image_size);
+    t->user_stack = (unsigned long)alloc(USER_STACK_SIZE);
+    if (!t->user_image || !t->user_stack) {
+        user_address_space_destroy(t);
+        return 0;
+    }
+
+    zero_bytes((void *)t->user_image, image_size);
+    zero_bytes((void *)t->user_stack, USER_STACK_SIZE);
+    copy_bytes((void *)t->user_image, prog, size);
+
+    if (!map_pages((unsigned long *)t->pgd, 0, image_size,
+                   virt_to_phys(t->user_image), PROT_USER_RWX) ||
+        !map_pages((unsigned long *)t->pgd, USER_STACK_BASE, USER_STACK_SIZE,
+                   virt_to_phys(t->user_stack), PROT_USER_RW)) {
+        user_address_space_destroy(t);
+        return 0;
+    }
+
+    t->user_image_size = size;
+    t->user_image_alloc_size = image_size;
+    return 1;
+}
+
+void user_address_space_destroy(struct thread *t) {
+    if (!t)
+        return;
+
+    if (t->pgd) {
+        if (t->signal_stack)
+            unmap_pages((unsigned long *)t->pgd, USER_SIGNAL_STACK_BASE,
+                        USER_STACK_SIZE);
+        if (t->user_stack)
+            unmap_pages((unsigned long *)t->pgd, USER_STACK_BASE,
+                        USER_STACK_SIZE);
+        if (t->user_image)
+            unmap_pages((unsigned long *)t->pgd, 0,
+                        t->user_image_alloc_size);
+    }
+
+    if (t->signal_stack) {
+        free((void *)t->signal_stack);
+        t->signal_stack = 0;
+    }
+    if (t->user_stack) {
+        free((void *)t->user_stack);
+        t->user_stack = 0;
+    }
+    if (t->user_image) {
+        free((void *)t->user_image);
+        t->user_image = 0;
+    }
+    if (t->pgd) {
+        vm_free_user_pgd((unsigned long *)t->pgd);
+        t->pgd = 0;
+        t->pgd_pa = 0;
+    }
+    t->user_image_size = 0;
+    t->user_image_alloc_size = 0;
 }
 
 static void enqueue_thread(struct thread *t) {
@@ -124,12 +206,13 @@ struct thread *thread_create(void (*fn)(void)) {
     return t;
 }
 
-struct thread *user_process_create(unsigned long entry) {
+static struct thread *user_process_create_from_image(const void *prog,
+                                                     unsigned long size) {
     unsigned long flags;
     struct thread *t;
     struct trapframe *tf;
 
-    if (!entry)
+    if (!prog || size == 0)
         return 0;
 
     t = (struct thread *)alloc(sizeof(*t));
@@ -138,12 +221,10 @@ struct thread *user_process_create(unsigned long entry) {
     zero_bytes(t, sizeof(*t));
 
     t->kernel_stack = (unsigned long)alloc(KERNEL_STACK_SIZE);
-    t->user_stack = (unsigned long)alloc(USER_STACK_SIZE);
-    if (!t->kernel_stack || !t->user_stack) {
+    if (!t->kernel_stack || !user_address_space_init(t, prog, size)) {
         if (t->kernel_stack)
             free((void *)t->kernel_stack);
-        if (t->user_stack)
-            free((void *)t->user_stack);
+        user_address_space_destroy(t);
         free(t);
         return 0;
     }
@@ -158,8 +239,8 @@ struct thread *user_process_create(unsigned long entry) {
                               sizeof(struct trapframe));
     zero_bytes(tf, sizeof(*tf));
     tf->tp = (unsigned long)t;
-    tf->sp = t->user_stack + USER_STACK_SIZE;
-    tf->sepc = entry;
+    tf->sp = USER_STACK_TOP;
+    tf->sepc = 0;
     tf->sstatus = (tf->sstatus & ~SSTATUS_SPP) | SSTATUS_SPIE | SSTATUS_SUM;
 
     t->context.ra = (unsigned long)ret_from_exception;
@@ -171,6 +252,10 @@ struct thread *user_process_create(unsigned long entry) {
     return t;
 }
 
+struct thread *user_process_create(unsigned long entry) {
+    return user_process_create_from_image((const void *)entry, PAGE_SIZE);
+}
+
 struct thread *user_process_create_from_file(const char *path) {
     const void *prog = 0;
     unsigned long size = 0;
@@ -179,7 +264,7 @@ struct thread *user_process_create_from_file(const char *path) {
     if (!cpio_find(path, &prog, &size))
         return 0;
 
-    t = user_process_create((unsigned long)prog);
+    t = user_process_create_from_image(prog, size);
     if (t)
         g_foreground_pid = t->pid;
     return t;
@@ -219,8 +304,10 @@ void schedule(void) {
         prev->status = THREAD_READY;
     next->status = THREAD_RUNNING;
 
-    if (prev != next)
+    if (prev != next) {
+        switch_vm(next->pgd_pa);
         switch_to(prev, next);
+    }
 
     irq_restore(flags);
 }
@@ -279,10 +366,7 @@ void kill_zombies(void) {
 
             if (dead->kernel_stack)
                 free((void *)dead->kernel_stack);
-            if (dead->user_stack)
-                free((void *)dead->user_stack);
-            if (dead->signal_stack)
-                free((void *)dead->signal_stack);
+            user_address_space_destroy(dead);
             free(dead);
             continue;
         }

@@ -6,6 +6,7 @@
 #include "timer.h"
 #include "uart.h"
 #include "video.h"
+#include "vm.h"
 
 #define SYS_GETPID     0UL
 #define SYS_UART_READ  1UL
@@ -55,14 +56,6 @@ static void zero_bytes(void *ptr, unsigned long len) {
         *p++ = 0;
 }
 
-static unsigned long adjust_stack_value(unsigned long value,
-                                        unsigned long old_base,
-                                        unsigned long new_base) {
-    if (value >= old_base && value < old_base + USER_STACK_SIZE)
-        return value + (new_base - old_base);
-    return value;
-}
-
 static int valid_signum(int signum) {
     return signum > 0 && signum < MAX_SIGNALS;
 }
@@ -75,6 +68,9 @@ static void clear_signal_runtime(struct thread *t) {
     t->signal_active = 0;
     zero_bytes(&t->signal_saved_tf, sizeof(t->signal_saved_tf));
     if (t->signal_stack) {
+        if (t->pgd)
+            unmap_pages((unsigned long *)t->pgd, USER_SIGNAL_STACK_BASE,
+                        USER_STACK_SIZE);
         free((void *)t->signal_stack);
         t->signal_stack = 0;
     }
@@ -229,7 +225,7 @@ static void syscall_exec(struct trapframe *tf) {
     const void *prog = 0;
     unsigned long size = 0;
     struct thread *current = get_current();
-    unsigned long new_stack;
+    struct thread next_space;
 
     if (!path || !cpio_find(path, &prog, &size)) {
         tf->a0 = (unsigned long)-1L;
@@ -237,22 +233,27 @@ static void syscall_exec(struct trapframe *tf) {
         return;
     }
 
-    new_stack = (unsigned long)alloc(USER_STACK_SIZE);
-    if (!new_stack) {
+    zero_bytes(&next_space, sizeof(next_space));
+    if (!user_address_space_init(&next_space, prog, size)) {
         tf->a0 = (unsigned long)-1L;
         tf->sepc += 4;
         return;
     }
 
-    if (current->user_stack)
-        free((void *)current->user_stack);
+    switch_vm(next_space.pgd_pa);
+    user_address_space_destroy(current);
     clear_signal_runtime(current);
-    current->user_stack = new_stack;
+    current->pgd = next_space.pgd;
+    current->pgd_pa = next_space.pgd_pa;
+    current->user_image = next_space.user_image;
+    current->user_image_size = next_space.user_image_size;
+    current->user_image_alloc_size = next_space.user_image_alloc_size;
+    current->user_stack = next_space.user_stack;
 
     zero_bytes(tf, sizeof(*tf));
     tf->tp = (unsigned long)current;
-    tf->sp = current->user_stack + USER_STACK_SIZE;
-    tf->sepc = (unsigned long)prog;
+    tf->sp = USER_STACK_TOP;
+    tf->sepc = 0;
     tf->sstatus = (1UL << 5) | (1UL << 18);
     tf->a0 = 0;
 }
@@ -262,7 +263,6 @@ static void syscall_fork(struct trapframe *tf) {
     struct thread *child;
     struct trapframe *child_tf;
     unsigned long kernel_offset;
-    unsigned long user_offset;
 
     child = (struct thread *)alloc(sizeof(*child));
     if (!child) {
@@ -273,12 +273,19 @@ static void syscall_fork(struct trapframe *tf) {
 
     scheduler_copy_bytes(child, parent, sizeof(*child));
     child->kernel_stack = (unsigned long)alloc(KERNEL_STACK_SIZE);
-    child->user_stack = (unsigned long)alloc(USER_STACK_SIZE);
-    if (!child->kernel_stack || !child->user_stack) {
+    child->pgd = 0;
+    child->pgd_pa = 0;
+    child->user_image = 0;
+    child->user_image_size = 0;
+    child->user_image_alloc_size = 0;
+    child->user_stack = 0;
+    child->signal_stack = 0;
+    if (!child->kernel_stack ||
+        !user_address_space_init(child, (const void *)parent->user_image,
+                                 parent->user_image_size)) {
         if (child->kernel_stack)
             free((void *)child->kernel_stack);
-        if (child->user_stack)
-            free((void *)child->user_stack);
+        user_address_space_destroy(child);
         free(child);
         tf->a0 = (unsigned long)-1L;
         tf->sepc += 4;
@@ -288,6 +295,9 @@ static void syscall_fork(struct trapframe *tf) {
     scheduler_copy_bytes((void *)child->kernel_stack,
                          (const void *)parent->kernel_stack,
                          KERNEL_STACK_SIZE);
+    scheduler_copy_bytes((void *)child->user_image,
+                         (const void *)parent->user_image,
+                         parent->user_image_alloc_size);
     scheduler_copy_bytes((void *)child->user_stack,
                          (const void *)parent->user_stack,
                          USER_STACK_SIZE);
@@ -302,19 +312,11 @@ static void syscall_fork(struct trapframe *tf) {
     zero_bytes(&child->signal_saved_tf, sizeof(child->signal_saved_tf));
 
     kernel_offset = child->kernel_stack - parent->kernel_stack;
-    user_offset = child->user_stack - parent->user_stack;
     child_tf = (struct trapframe *)((unsigned long)tf + kernel_offset);
 
     child_tf->a0 = 0;
     child_tf->tp = (unsigned long)child;
     child_tf->sepc += 4;
-    child_tf->sp = adjust_stack_value(child_tf->sp,
-                                      parent->user_stack,
-                                      child->user_stack);
-    child_tf->s0 = adjust_stack_value(child_tf->s0,
-                                      parent->user_stack,
-                                      child->user_stack);
-    (void)user_offset;
 
     child->context.ra = (unsigned long)ret_from_exception;
     child->context.sp = (unsigned long)child_tf;
@@ -457,8 +459,12 @@ static void syscall_sigreturn(struct trapframe *tf) {
     current->signal_stack = 0;
     zero_bytes(&current->signal_saved_tf, sizeof(current->signal_saved_tf));
 
-    if (signal_stack)
+    if (signal_stack) {
+        if (current->pgd)
+            unmap_pages((unsigned long *)current->pgd, USER_SIGNAL_STACK_BASE,
+                        USER_STACK_SIZE);
         free((void *)signal_stack);
+    }
 }
 
 static void syscall_kill(struct trapframe *tf) {
@@ -510,6 +516,12 @@ void signal_deliver(struct trapframe *tf) {
     stack = (unsigned long)alloc(USER_STACK_SIZE);
     if (!stack)
         return;
+    zero_bytes((void *)stack, USER_STACK_SIZE);
+    if (!map_pages((unsigned long *)current->pgd, USER_SIGNAL_STACK_BASE,
+                   USER_STACK_SIZE, virt_to_phys(stack), PROT_USER_RWX)) {
+        free((void *)stack);
+        return;
+    }
 
     current->pending_signals &= ~(1UL << signum);
     current->signal_active = 1;
@@ -522,8 +534,8 @@ void signal_deliver(struct trapframe *tf) {
     trampoline[2] = SIGRETURN_INST_LOOP;   // jal zero, 0
     asm volatile("fence.i" ::: "memory");
 
-    tf->ra = stack;
-    tf->sp = stack + USER_STACK_SIZE;
+    tf->ra = USER_SIGNAL_STACK_BASE;
+    tf->sp = USER_SIGNAL_STACK_TOP;
     tf->sepc = current->signal_handlers[signum];
     tf->a0 = (unsigned long)signum;
     tf->tp = (unsigned long)current;

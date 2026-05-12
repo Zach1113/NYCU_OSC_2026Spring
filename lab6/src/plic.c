@@ -1,6 +1,7 @@
 #include "plic.h"
 
 #include "fdt.h"
+#include "vm.h"
 
 #define PLIC_BASE_DEFAULT 0xE0000000UL
 
@@ -19,11 +20,11 @@
 static unsigned long g_plic_base = PLIC_BASE_DEFAULT;
 
 static unsigned int mmio_read32(unsigned long addr) {
-    return *(volatile unsigned int *)addr;
+    return *(volatile unsigned int *)phys_to_virt(addr);
 }
 
 static void mmio_write32(unsigned long addr, unsigned int v) {
-    *(volatile unsigned int *)addr = v;
+    *(volatile unsigned int *)phys_to_virt(addr) = v;
 }
 
 void plic_init_from_dtb(const void *fdt) {

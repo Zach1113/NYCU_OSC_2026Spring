@@ -1,9 +1,9 @@
 #include "uart.h"
 #include "mm.h"
+#include "vm.h"
 #include "list.h"
 #include "fdt.h"
 
-#define PAGE_SIZE   4096UL
 #define MAX_ORDER   10
 #define MAX_ALLOC_SIZE (PAGE_SIZE * (1UL << MAX_ORDER))
 
@@ -458,7 +458,7 @@ static int startup_alloc_frame_array(void) {
     if (frame_array_pa == (unsigned long)-1)
         return 0;
 
-    g_frames = (struct frame *)frame_array_pa;
+    g_frames = (struct frame *)phys_to_virt(frame_array_pa);
     record_reserved_range(frame_array_pa, g_frame_array_bytes);
     return 1;
 }
@@ -518,12 +518,13 @@ static void reserve_fdt_blob(const void *fdt) {
     if (!fdt)
         return;
     h = (const struct fdt_header *)fdt;
-    record_reserved_range((unsigned long)fdt, fdt_be32(&h->totalsize));
+    record_reserved_range(virt_to_phys((unsigned long)fdt),
+                          fdt_be32(&h->totalsize));
 }
 
 static void reserve_kernel_image(void) {
-    unsigned long start = (unsigned long)_start;
-    unsigned long end = (unsigned long)_end;
+    unsigned long start = virt_to_phys((unsigned long)_start);
+    unsigned long end = virt_to_phys((unsigned long)_end);
 
     if (end > start)
         record_reserved_range(start, end - start);
@@ -625,7 +626,7 @@ static int pool_refill(int pool_id) {
     log_chunk_refill(pa, chunk_size);
 
     for (off = 0; off + chunk_size <= PAGE_SIZE; off += chunk_size)
-        pool_push_chunk(pool_id, (void *)(pa + off));
+        pool_push_chunk(pool_id, (void *)phys_to_virt(pa + off));
 
     return 1;
 }
@@ -649,7 +650,8 @@ static void *chunk_alloc(unsigned long size) {
 }
 
 // free small chunk
-static int chunk_free_ptr(unsigned long pa) {
+static int chunk_free_ptr(unsigned long ptr) {
+    unsigned long pa = virt_to_phys(ptr);
     unsigned long base_pa = pa & ~(PAGE_SIZE - 1UL); // page-aligned base address of the chunk
     unsigned long idx;
     unsigned long chunk_size;
@@ -674,7 +676,7 @@ static int chunk_free_ptr(unsigned long pa) {
     if ((off % chunk_size) != 0)
         return 0;
 
-    pool_push_chunk(pool_id, (void *)pa);
+    pool_push_chunk(pool_id, (void *)ptr);
     log_chunk_free(pa, chunk_size);
     return 1;
 }
@@ -784,10 +786,11 @@ void *alloc(unsigned long size) {
         uart_hex(next_addr_at_order(order));
         uart_putc('\n');
     }
-    return (void *)pa;
+    return (void *)phys_to_virt(pa);
 }
 
 void free(void *ptr) {
+    unsigned long va;
     unsigned long pa;
     unsigned long idx;
     int order;
@@ -795,7 +798,8 @@ void free(void *ptr) {
     if (!ptr || !g_mm_ready)
         return;
 
-    pa = (unsigned long)ptr;
+    va = (unsigned long)ptr;
+    pa = virt_to_phys(va);
     if (!in_range_pa(pa)) {
         if (!(g_log_flags & LOGF_VERBOSE))
             return;
@@ -806,7 +810,7 @@ void free(void *ptr) {
     }
 
     // try free chunk
-    if (chunk_free_ptr(pa))
+    if (chunk_free_ptr(va))
         return;
 
     // check if pointer is page-aligned
