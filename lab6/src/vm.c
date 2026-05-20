@@ -8,10 +8,18 @@
 #define VPN_MASK 0x1ffUL
 #define BLOCK_2M_SIZE (2UL * 1024UL * 1024UL)
 #define BLOCK_1G_SIZE (1024UL * 1024UL * 1024UL)
+#define EARLY_PTE_PAGES 40UL
+
+#define BOARD_UART_PA 0xd4017000UL
+#define BOARD_UART_SIZE PAGE_SIZE
+#define BOARD_PLIC_PA 0xe0000000UL
+#define BOARD_PLIC_SIZE 0x04000000UL
 
 static unsigned long g_kernel_pgd[PT_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
 static unsigned long g_identity_pmd[PT_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
 static unsigned long g_kernel_pmd[4][PT_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
+static unsigned long g_early_pte[EARLY_PTE_PAGES][PT_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
+static unsigned long g_early_pte_next;
 
 static unsigned long align_down(unsigned long v, unsigned long align) {
     return v & ~(align - 1UL);
@@ -41,14 +49,6 @@ static int pte_is_leaf(unsigned long pte) {
     return pte & (PTE_R | PTE_W | PTE_X);
 }
 
-static int is_mmio_block(unsigned long pa) {
-    if (pa >= 0xc0000000UL)
-        return 1;
-    if (pa >= 0x0c000000UL && pa < 0x10200000UL)
-        return 1;
-    return 0;
-}
-
 static unsigned long vpn_index(unsigned long va, int level) {
     return (va >> (12 + 9 * level)) & VPN_MASK;
 }
@@ -69,10 +69,60 @@ static void map_2m_range(unsigned long *pgd, unsigned long *pmd,
     }
 }
 
+static unsigned long *early_alloc_pte(void) {
+    unsigned long *pte;
+
+    if (g_early_pte_next >= EARLY_PTE_PAGES)
+        return 0;
+
+    pte = g_early_pte[g_early_pte_next++];
+    zero_page(pte);
+    return pte;
+}
+
+static int map_4k_range_early(unsigned long *pgd, unsigned long va,
+                              unsigned long pa, unsigned long size,
+                              unsigned long prot) {
+    unsigned long start = align_down(va, PAGE_SIZE);
+    unsigned long end = align_up(va + size, PAGE_SIZE);
+    unsigned long cur_pa = align_down(pa, PAGE_SIZE);
+
+    while (start < end) {
+        unsigned long pgd_idx = vpn_index(start, 2);
+        unsigned long pmd_idx = vpn_index(start, 1);
+        unsigned long pte_idx = vpn_index(start, 0);
+        unsigned long *pmd;
+        unsigned long *pte;
+
+        if (pgd_idx < PGD_KERNEL_BASE || pgd_idx >= PGD_KERNEL_BASE + 4)
+            return 0;
+
+        pmd = g_kernel_pmd[pgd_idx - PGD_KERNEL_BASE];
+        if (!(pgd[pgd_idx] & PTE_V))
+            pgd[pgd_idx] = make_pte((unsigned long)pmd, PTE_V);
+
+        if (!(pmd[pmd_idx] & PTE_V)) {
+            pte = early_alloc_pte();
+            if (!pte)
+                return 0;
+            pmd[pmd_idx] = make_pte((unsigned long)pte, PTE_V);
+        } else {
+            pte = (unsigned long *)pte_pa(pmd[pmd_idx]);
+        }
+
+        pte[pte_idx] = make_pte(cur_pa, prot);
+        start += PAGE_SIZE;
+        cur_pa += PAGE_SIZE;
+    }
+
+    return 1;
+}
+
 void setup_vm(unsigned long fdt_pa) {
     unsigned long i;
     (void)fdt_pa;
 
+    g_early_pte_next = 0;
     zero_page(g_kernel_pgd);
     zero_page(g_identity_pmd);
     for (i = 0; i < 4; i++)
@@ -81,20 +131,18 @@ void setup_vm(unsigned long fdt_pa) {
     map_2m_range(g_kernel_pgd, g_identity_pmd, 0, 0, BLOCK_1G_SIZE,
                  PROT_KERNEL);
 
-    for (i = 0; i < 4; i++) {
+    for (i = 0; i < 2; i++) {
         unsigned long va = KERNEL_OFFSET + i * BLOCK_1G_SIZE;
         unsigned long pa = i * BLOCK_1G_SIZE;
 
-        g_kernel_pgd[vpn_index(va, 2)] =
-            make_pte((unsigned long)g_kernel_pmd[i], PTE_V);
-        for (unsigned long j = 0; j < PT_ENTRIES; j++) {
-            unsigned long block_pa = pa + j * BLOCK_2M_SIZE;
-            unsigned long flags = is_mmio_block(block_pa) ? PROT_MMIO :
-                                  PROT_KERNEL;
-
-            g_kernel_pmd[i][j] = make_pte(block_pa, flags);
-        }
+        map_2m_range(g_kernel_pgd, g_kernel_pmd[i], va, pa,
+                     BLOCK_1G_SIZE, PROT_KERNEL);
     }
+
+    map_4k_range_early(g_kernel_pgd, phys_to_virt(BOARD_UART_PA),
+                       BOARD_UART_PA, BOARD_UART_SIZE, PROT_MMIO);
+    map_4k_range_early(g_kernel_pgd, phys_to_virt(BOARD_PLIC_PA),
+                       BOARD_PLIC_PA, BOARD_PLIC_SIZE, PROT_MMIO);
 
     asm volatile(
         "csrw satp, %0\n"

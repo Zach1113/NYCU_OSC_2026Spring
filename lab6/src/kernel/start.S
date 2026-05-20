@@ -21,15 +21,15 @@ clear_bss_done:
     mv   a0, s1
     call setup_vm
 
-    li   t0, 0xffffffc000000000
+    li   t0, 0xffffffc000000000     /* t0 = higher half offset */
     la   t1, higher_half_start
     add  t1, t1, t0
     jr   t1
 
 higher_half_start:
-    add  sp, sp, t0
-    mv   a0, s0
-    add  a1, s1, t0
+    add  sp, sp, t0     /* adjust stack pointer for higher half */
+    mv   a0, s0         /* pass hartid to C */
+    add  a1, s1, t0     /* adjust FDT pointer for higher half */
     call drop_identity_map
 
     tail start_kernel             /* jump to C (tail: no return) */
