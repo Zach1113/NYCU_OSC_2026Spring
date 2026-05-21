@@ -8,6 +8,7 @@
 #include "trap.h"
 #include "task.h"
 #include "video.h"
+#include "vm.h"
 
 #define SBI_EXT_BASE  0x10
 #define SIE_SEIE (1UL << 9)
@@ -132,6 +133,7 @@ static void cmd_help(void) {
     uart_puts("  setTimeout - Print a message later (usage: setTimeout <sec> <msg>)\n");
     uart_puts("  taskbatch - Queue spec-style demo tasks with priorities 1/3/5\n");
     uart_puts("  threadtest - Create three round-robin kernel threads\n");
+    uart_puts("  vmcheck - Check whether virtual memory (Sv39) is enabled\n");
 }
 
 static void cmd_hello(void) {
@@ -261,6 +263,51 @@ static void cmd_threadtest(void) {
     scheduler_thread_test();
 }
 
+static void cmd_vmcheck(void) {
+    unsigned long satp;
+    unsigned long mode;
+    unsigned long satp_ppn;
+    unsigned long satp_root_pa;
+    unsigned long expected_root_pa;
+    unsigned long *pgd_va;
+    unsigned long uart_pa;
+    unsigned long uart_base = uart_base_addr();
+
+    asm volatile("csrr %0, satp" : "=r"(satp));
+    mode = satp >> 60;
+    satp_ppn = satp & ((1UL << 44) - 1UL);
+    satp_root_pa = satp_ppn << 12;
+    expected_root_pa = kernel_pgd_pa();
+    pgd_va = (unsigned long *)phys_to_virt(expected_root_pa);
+    uart_pa = vm_translate(pgd_va, phys_to_virt(uart_base));
+
+    uart_puts("[vm] satp=");
+    uart_hex(satp);
+    uart_puts(" mode=");
+    if (mode == 8UL)
+        uart_puts("Sv39");
+    else if (mode == 0UL)
+        uart_puts("Bare");
+    else
+        uart_puts("Unknown");
+
+    uart_puts(" root=");
+    uart_hex(satp_root_pa);
+    uart_puts(" expected=");
+    uart_hex(expected_root_pa);
+
+    if (mode == 8UL && satp_root_pa == expected_root_pa)
+        uart_puts(" status=ENABLED");
+    else
+        uart_puts(" status=NOT-ENABLED");
+
+    if (uart_pa == uart_base)
+        uart_puts(" uart-map=OK");
+    else
+        uart_puts(" uart-map=BAD");
+    uart_putc('\n');
+}
+
 static void shell_execute_command(char *buf) {
     if (streq(buf, "help"))
         cmd_help();
@@ -307,6 +354,9 @@ static void shell_execute_command(char *buf) {
     }
     else if (streq(buf, "threadtest")) {
         cmd_threadtest();
+    }
+    else if (streq(buf, "vmcheck")) {
+        cmd_vmcheck();
     }
     else if (buf[0] != '\0') {
         uart_puts("Unknown command: ");
@@ -383,6 +433,9 @@ void start_kernel(unsigned long hartid, const void *fdt) {
     uart_irq_init();
     enable_supervisor_external_interrupts();
     timer_init();
+
+    uart_puts("\n");
+    cmd_vmcheck(); // check if vm is enabled
 
     uart_puts("\nNYCU OSC2026 RISC-V Kernel\n");
     uart_puts("Type 'help' for available commands.\n\n");
