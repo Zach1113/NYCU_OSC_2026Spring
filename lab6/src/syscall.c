@@ -2,6 +2,7 @@
 
 #include "cpio.h"
 #include "mm.h"
+#include "mmap.h"
 #include "sched.h"
 #include "timer.h"
 #include "uart.h"
@@ -21,6 +22,7 @@
 #define SYS_SIGNAL     10UL
 #define SYS_SIGRETURN  11UL
 #define SYS_KILL       12UL
+#define SYS_MMAP       13UL
 
 #define SSTATUS_SPP    (1UL << 8)
 #define SIGRETURN_INST_ADD_A7 0x00b00893U
@@ -249,6 +251,7 @@ static void syscall_exec(struct trapframe *tf) {
     current->user_image_size = next_space.user_image_size;
     current->user_image_alloc_size = next_space.user_image_alloc_size;
     current->user_stack = next_space.user_stack;
+    current->mmap_regions = next_space.mmap_regions;
 
     zero_bytes(tf, sizeof(*tf));
     tf->tp = (unsigned long)current;
@@ -280,6 +283,7 @@ static void syscall_fork(struct trapframe *tf) {
     child->user_image_alloc_size = 0;
     child->user_stack = 0;
     child->signal_stack = 0;
+    child->mmap_regions = 0;
     if (!child->kernel_stack ||
         !user_address_space_init(child, (const void *)parent->user_image,
                                  parent->user_image_size)) {
@@ -301,6 +305,16 @@ static void syscall_fork(struct trapframe *tf) {
     scheduler_copy_bytes((void *)child->user_stack,
                          (const void *)parent->user_stack,
                          USER_STACK_SIZE);
+
+    if (!user_mmap_clone(child, parent)) {
+        if (child->kernel_stack)
+            free((void *)child->kernel_stack);
+        user_address_space_destroy(child);
+        free(child);
+        tf->a0 = (unsigned long)-1L;
+        tf->sepc += 4;
+        return;
+    }
 
     child->pid = scheduler_next_pid();
     child->status = THREAD_READY;
@@ -490,6 +504,18 @@ static void syscall_kill(struct trapframe *tf) {
     tf->sepc += 4;
 }
 
+static void syscall_mmap(struct trapframe *tf) {
+    unsigned long addr = tf->a0;
+    unsigned long length = tf->a1;
+    int prot = (int)tf->a2;
+    int flags = (int)tf->a3;
+    unsigned long mapped;
+
+    mapped = user_mmap_anonymous(get_current(), addr, length, prot, flags);
+    tf->a0 = mapped ? mapped : (unsigned long)-1L;
+    tf->sepc += 4;
+}
+
 void signal_deliver(struct trapframe *tf) {
     struct thread *current = get_current();
     unsigned int *trampoline;
@@ -581,6 +607,9 @@ void syscall_handle(struct trapframe *tf) {
         break;
     case SYS_KILL:
         syscall_kill(tf);
+        break;
+    case SYS_MMAP:
+        syscall_mmap(tf);
         break;
     default:
         uart_puts("[syscall] unknown syscall: ");

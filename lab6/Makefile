@@ -38,7 +38,7 @@ KERNEL_ASMFILES = $(wildcard $(KERNELDIR)/*.S)
 KERNEL_CFILES   = $(wildcard $(KERNELDIR)/*.c)
 KERNEL_SHARED_CFILES = $(SRCDIR)/uart.c $(SRCDIR)/fdt.c $(SRCDIR)/cpio.c $(SRCDIR)/mm.c $(SRCDIR)/vm.c \
 			      $(SRCDIR)/timer.c $(SRCDIR)/plic.c $(SRCDIR)/task.c \
-			      $(SRCDIR)/sched.c $(SRCDIR)/syscall.c $(SRCDIR)/video.c
+			      $(SRCDIR)/sched.c $(SRCDIR)/syscall.c $(SRCDIR)/mmap.c $(SRCDIR)/video.c
 KERNEL_OBJFILES = $(KERNEL_ASMFILES:.S=.o) \
                   $(KERNEL_CFILES:.c=.o) \
                   $(KERNEL_SHARED_CFILES:.c=.o)
@@ -75,7 +75,7 @@ $(KERNEL_BIN): $(KERNEL_ELF)
 	$(OBJCOPY) -O binary $< $@
 
 .PHONY: fit
-fit: $(BOOT_BIN)
+fit: $(KERNEL_BIN)
 	@if [ ! -f $(SRCDIR)/x1_orangepi-rv2.dtb ]; then \
 		echo "ERROR: $(SRCDIR)/x1_orangepi-rv2.dtb not found!"; \
 		exit 1; \
@@ -84,10 +84,10 @@ fit: $(BOOT_BIN)
 		echo "ERROR: initramfs.cpio not found in lab5/"; \
 		exit 1; \
 	fi
-	cp $(BOOT_BIN) $(SRCDIR)/boot.bin
+	cp $(KERNEL_BIN) $(SRCDIR)/kernel.bin
 	cp initramfs.cpio $(SRCDIR)/initramfs.cpio
 	mkimage -f $(SRCDIR)/kernel.its $(BOOT_FIT)
-	rm -f $(SRCDIR)/boot.bin
+	rm -f $(SRCDIR)/kernel.bin
 	rm -f $(SRCDIR)/initramfs.cpio
 	@echo "[FIT] $(BOOT_FIT) ready - copy to SD card boot partition"
 
@@ -114,4 +114,4 @@ clean:
 	rm -f $(BOOTDIR)/*.o $(BOOTDIR)/*.elf
 	rm -f $(SRCDIR)/*.o $(KERNELDIR)/*.o $(KERNELDIR)/*.elf
 	rm -f $(KERNEL_BIN) $(BOOT_BIN) $(BOOT_FIT) boot.scr
-	rm -f $(SRCDIR)/boot.bin $(SRCDIR)/initramfs.cpio
+	rm -f $(SRCDIR)/boot.bin $(SRCDIR)/kernel.bin $(SRCDIR)/initramfs.cpio

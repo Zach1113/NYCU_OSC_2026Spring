@@ -7,6 +7,8 @@
 #define USER_STACK_SIZE   0x8000UL
 #define MAX_SIGNALS       32
 
+struct mmap_region;
+
 enum thread_status {
     THREAD_RUNNING,
     THREAD_READY,
@@ -42,6 +44,7 @@ struct thread {
     int signal_active;
     struct trapframe signal_saved_tf;
     unsigned long signal_stack;
+    struct mmap_region *mmap_regions;
 };
 
 void scheduler_init(void);

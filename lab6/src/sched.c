@@ -2,6 +2,7 @@
 
 #include "cpio.h"
 #include "mm.h"
+#include "mmap.h"
 #include "uart.h"
 #include "vm.h"
 
@@ -52,6 +53,7 @@ static unsigned long align_up(unsigned long value, unsigned long align) {
     return (value + align - 1UL) & ~(align - 1UL);
 }
 
+
 int user_address_space_init(struct thread *t, const void *prog,
                             unsigned long size) {
     unsigned long image_size;
@@ -95,6 +97,8 @@ int user_address_space_init(struct thread *t, const void *prog,
 void user_address_space_destroy(struct thread *t) {
     if (!t)
         return;
+
+    user_mmap_destroy(t);
 
     if (t->pgd) {
         if (t->signal_stack)
