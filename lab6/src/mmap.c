@@ -2,7 +2,12 @@
 
 #include "mm.h"
 #include "sched.h"
+#include "uart.h"
 #include "vm.h"
+
+#define SCAUSE_INST_PAGE_FAULT  12UL
+#define SCAUSE_LOAD_PAGE_FAULT  13UL
+#define SCAUSE_STORE_PAGE_FAULT 15UL
 
 struct mmap_region {
     unsigned long start;
@@ -57,6 +62,22 @@ static unsigned long mmap_pte_prot(int prot) {
     if (prot & PROT_EXEC)
         pte |= PTE_X;
     return pte;
+}
+
+static int mmap_prot_allows_fault(int prot, unsigned long cause) {
+    if (cause == SCAUSE_INST_PAGE_FAULT)
+        return (prot & PROT_EXEC) != 0;
+    if (cause == SCAUSE_LOAD_PAGE_FAULT)
+        return (prot & (PROT_READ | PROT_WRITE)) != 0;
+    if (cause == SCAUSE_STORE_PAGE_FAULT)
+        return (prot & PROT_WRITE) != 0;
+    return 0;
+}
+
+static void log_translation_fault(unsigned long addr) {
+    uart_puts("[Translation fault]: ");
+    uart_hex(addr);
+    uart_putc('\n');
 }
 
 static int user_range_conflict_end(const struct thread *t,
@@ -158,6 +179,36 @@ static void user_mmap_free_region(struct thread *t, struct mmap_region *r,
     free(r);
 }
 
+static int user_mmap_map_page(struct thread *t, struct mmap_region *r,
+                              unsigned long page_index,
+                              unsigned long existing_frame) {
+    unsigned long va;
+    unsigned long frame;
+
+    if (!t || !t->pgd || !r || page_index >= r->page_count)
+        return 0;
+
+    if (existing_frame) {
+        frame = existing_frame;
+    } else {
+        frame = (unsigned long)alloc(PAGE_SIZE);
+        if (!frame)
+            return 0;
+        zero_bytes((void *)frame, PAGE_SIZE);
+    }
+
+    va = r->start + page_index * PAGE_SIZE;
+    if (!map_pages((unsigned long *)t->pgd, va, PAGE_SIZE,
+                   virt_to_phys(frame), mmap_pte_prot(r->prot))) {
+        if (!existing_frame)
+            free((void *)frame);
+        return 0;
+    }
+
+    r->frames[page_index] = frame;
+    return 1;
+}
+
 static struct mmap_region *user_mmap_create_region(struct thread *t,
                                                    unsigned long start,
                                                    unsigned long length,
@@ -165,7 +216,6 @@ static struct mmap_region *user_mmap_create_region(struct thread *t,
                                                    int flags) {
     struct mmap_region *r;
     unsigned long i;
-    unsigned long pte_prot;
 
     r = (struct mmap_region *)alloc(sizeof(*r));
     if (!r)
@@ -184,28 +234,74 @@ static struct mmap_region *user_mmap_create_region(struct thread *t,
     }
     zero_bytes(r->frames, r->page_count * sizeof(unsigned long));
 
-    pte_prot = mmap_pte_prot(prot);
-    for (i = 0; i < r->page_count; i++) {
-        unsigned long va = start + i * PAGE_SIZE;
-        void *frame = alloc(PAGE_SIZE);
-
-        if (!frame) {
-            user_mmap_free_region(t, r, i);
-            return 0;
-        }
-        zero_bytes(frame, PAGE_SIZE);
-        r->frames[i] = (unsigned long)frame;
-
-        if (!map_pages((unsigned long *)t->pgd, va, PAGE_SIZE,
-                       virt_to_phys((unsigned long)frame), pte_prot)) {
-            user_mmap_free_region(t, r, i);
-            return 0;
+    if (flags & MAP_POPULATE) {
+        for (i = 0; i < r->page_count; i++) {
+            if (!user_mmap_map_page(t, r, i, 0)) {
+                user_mmap_free_region(t, r, i);
+                return 0;
+            }
         }
     }
 
     r->next = t->mmap_regions;
     t->mmap_regions = r;
     return r;
+}
+
+static struct mmap_region *user_mmap_find_region(struct thread *t,
+                                                 unsigned long addr) {
+    struct mmap_region *r;
+
+    if (!t)
+        return 0;
+
+    for (r = t->mmap_regions; r; r = r->next) {
+        if (addr >= r->start && addr < r->end)
+            return r;
+    }
+    return 0;
+}
+
+static int user_mmap_clone_page(struct thread *dst,
+                                struct mmap_region *clone,
+                                unsigned long page_index,
+                                unsigned long src_frame) {
+    void *frame;
+
+    if (!src_frame)
+        return 1;
+
+    frame = alloc(PAGE_SIZE);
+    if (!frame)
+        return 0;
+    copy_bytes(frame, (const void *)src_frame, PAGE_SIZE);
+
+    if (!user_mmap_map_page(dst, clone, page_index, (unsigned long)frame)) {
+        free(frame);
+        return 0;
+    }
+    return 1;
+}
+
+int user_mmap_handle_page_fault(struct thread *t, unsigned long addr,
+                                unsigned long cause) {
+    struct mmap_region *r;
+    unsigned long page_index;
+
+    r = user_mmap_find_region(t, addr);
+    if (!r || !mmap_prot_allows_fault(r->prot, cause))
+        return 0;
+
+    page_index = (addr - r->start) / PAGE_SIZE;
+    if (page_index >= r->page_count)
+        return 0;
+
+    if (!r->frames[page_index] &&
+        !user_mmap_map_page(t, r, page_index, 0))
+        return 0;
+
+    log_translation_fault(addr);
+    return 1;
 }
 
 unsigned long user_mmap_anonymous(struct thread *t, unsigned long addr,
@@ -249,12 +345,14 @@ int user_mmap_clone(struct thread *dst, const struct thread *src) {
         if (!user_range_available(dst, r->start, length))
             return 0;
         clone = user_mmap_create_region(dst, r->start, length,
-                                        r->prot, r->flags);
+                                        r->prot, r->flags & ~MAP_POPULATE);
         if (!clone)
             return 0;
-        for (i = 0; i < r->page_count; i++)
-            copy_bytes((void *)clone->frames[i],
-                       (const void *)r->frames[i], PAGE_SIZE);
+        clone->flags = r->flags;
+        for (i = 0; i < r->page_count; i++) {
+            if (!user_mmap_clone_page(dst, clone, i, r->frames[i]))
+                return 0;
+        }
     }
 
     return 1;

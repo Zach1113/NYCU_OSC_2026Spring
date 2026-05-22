@@ -53,6 +53,8 @@ struct thread *user_process_create(unsigned long entry);
 struct thread *user_process_create_from_file(const char *path);
 int user_address_space_init(struct thread *t, const void *prog,
                             unsigned long size);
+int user_stack_handle_page_fault(struct thread *t, unsigned long addr,
+                                 unsigned long cause);
 void user_address_space_destroy(struct thread *t);
 struct thread *get_current(void);
 void schedule(void);

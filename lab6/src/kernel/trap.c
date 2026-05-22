@@ -1,5 +1,6 @@
 #include "trap.h"
 
+#include "mmap.h"
 #include "plic.h"
 #include "sched.h"
 #include "syscall.h"
@@ -8,9 +9,12 @@
 #include "uart.h"
 
 #define SCAUSE_INTERRUPT_BIT (1UL << 63)
-#define SCAUSE_ECALL_UMODE   8UL
-#define SCAUSE_STIMER        5UL
-#define SCAUSE_SEXTERNAL     9UL
+#define SCAUSE_ECALL_UMODE       8UL
+#define SCAUSE_STIMER            5UL
+#define SCAUSE_SEXTERNAL         9UL
+#define SCAUSE_INST_PAGE_FAULT   12UL
+#define SCAUSE_LOAD_PAGE_FAULT   13UL
+#define SCAUSE_STORE_PAGE_FAULT  15UL
 
 extern void kernel_trap_vector(void);
 
@@ -50,6 +54,12 @@ static void print_trap_info_task(void *arg) {
                     g_trap_report.stval);
 }
 
+static int is_page_fault(unsigned long cause) {
+    return cause == SCAUSE_INST_PAGE_FAULT ||
+           cause == SCAUSE_LOAD_PAGE_FAULT ||
+           cause == SCAUSE_STORE_PAGE_FAULT;
+}
+
 void trap_init(void) {
     write_stvec(kernel_trap_vector);
     write_sscratch(0);
@@ -87,6 +97,15 @@ void trap_handler(struct trapframe *tf) {
         syscall_handle(tf);
         task_run_ready();
         return;
+    }
+
+    if ((scause & SCAUSE_INTERRUPT_BIT) == 0 && is_page_fault(cause) &&
+        get_current() && get_current()->is_user) {
+        if (user_stack_handle_page_fault(get_current(), stval, cause) ||
+            user_mmap_handle_page_fault(get_current(), stval, cause))
+            return;
+        uart_puts("[Segmentation fault]: Kill Process\n");
+        thread_exit();
     }
 
     g_trap_report.scause = scause;

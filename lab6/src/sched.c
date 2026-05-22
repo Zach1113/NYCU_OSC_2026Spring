@@ -9,6 +9,8 @@
 #define SSTATUS_SPP  (1UL << 8)
 #define SSTATUS_SPIE (1UL << 5)
 #define SSTATUS_SUM  (1UL << 18)
+#define SCAUSE_LOAD_PAGE_FAULT  13UL
+#define SCAUSE_STORE_PAGE_FAULT 15UL
 
 static struct thread *g_run_queue;
 static struct thread *g_idle_thread;
@@ -54,6 +56,44 @@ static unsigned long align_up(unsigned long value, unsigned long align) {
 }
 
 
+static unsigned long align_down(unsigned long value, unsigned long align) {
+    return value & ~(align - 1UL);
+}
+
+static int stack_fault_allowed(unsigned long cause) {
+    return cause == SCAUSE_LOAD_PAGE_FAULT ||
+           cause == SCAUSE_STORE_PAGE_FAULT;
+}
+
+static void log_translation_fault(unsigned long addr) {
+    uart_puts("[Translation fault]: ");
+    uart_hex(addr);
+    uart_putc('\n');
+}
+
+int user_stack_handle_page_fault(struct thread *t, unsigned long addr,
+                                 unsigned long cause) {
+    unsigned long va;
+    unsigned long offset;
+
+    if (!t || !t->pgd || !t->user_stack || !stack_fault_allowed(cause))
+        return 0;
+    if (addr < USER_STACK_BASE || addr >= USER_STACK_TOP)
+        return 0;
+
+    va = align_down(addr, PAGE_SIZE);
+    if (vm_translate((unsigned long *)t->pgd, va))
+        return 0;
+
+    offset = va - USER_STACK_BASE;
+    if (!map_pages((unsigned long *)t->pgd, va, PAGE_SIZE,
+                   virt_to_phys(t->user_stack + offset), PROT_USER_RW))
+        return 0;
+
+    log_translation_fault(addr);
+    return 1;
+}
+
 int user_address_space_init(struct thread *t, const void *prog,
                             unsigned long size) {
     unsigned long image_size;
@@ -83,8 +123,10 @@ int user_address_space_init(struct thread *t, const void *prog,
 
     if (!map_pages((unsigned long *)t->pgd, 0, image_size,
                    virt_to_phys(t->user_image), PROT_USER_RWX) ||
-        !map_pages((unsigned long *)t->pgd, USER_STACK_BASE, USER_STACK_SIZE,
-                   virt_to_phys(t->user_stack), PROT_USER_RW)) {
+        !map_pages((unsigned long *)t->pgd, USER_STACK_TOP - PAGE_SIZE,
+                   PAGE_SIZE,
+                   virt_to_phys(t->user_stack + USER_STACK_SIZE - PAGE_SIZE),
+                   PROT_USER_RW)) {
         user_address_space_destroy(t);
         return 0;
     }
