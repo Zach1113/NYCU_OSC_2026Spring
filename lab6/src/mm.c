@@ -38,6 +38,7 @@ struct frame {
     int order;
     unsigned short state;
     unsigned short pool_id;
+    unsigned long ref_count;
     struct list_head node;
 };
 
@@ -206,6 +207,7 @@ static void mark_tail(unsigned long idx, int order, unsigned short state) {
         g_frames[idx + i].order = -1;
         g_frames[idx + i].state = state;
         g_frames[idx + i].pool_id = INVALID_POOL_ID;
+        g_frames[idx + i].ref_count = 0;
     }
 }
 
@@ -213,6 +215,7 @@ static void block_set_free_head(unsigned long idx, int order) {
     g_frames[idx].order = order;
     g_frames[idx].state = FRAME_FREE_HEAD;
     g_frames[idx].pool_id = INVALID_POOL_ID;
+    g_frames[idx].ref_count = 0;
     mark_tail(idx, order, FRAME_FREE_TAIL);
 }
 
@@ -220,6 +223,7 @@ static void block_set_alloc_head(unsigned long idx, int order) {
     g_frames[idx].order = order;
     g_frames[idx].state = FRAME_ALLOC_HEAD;
     g_frames[idx].pool_id = INVALID_POOL_ID;
+    g_frames[idx].ref_count = 1;
     mark_tail(idx, order, FRAME_ALLOC_TAIL);
 }
 
@@ -227,6 +231,7 @@ static void mark_chunk_page(unsigned long idx, unsigned short pool_id) {
     g_frames[idx].order = 0;
     g_frames[idx].state = FRAME_CHUNK_PAGE;
     g_frames[idx].pool_id = pool_id;
+    g_frames[idx].ref_count = 1;
 }
 
 static void mark_reserved_range(unsigned long start_idx, unsigned long end_idx) {
@@ -238,10 +243,12 @@ static void mark_reserved_range(unsigned long start_idx, unsigned long end_idx) 
     g_frames[start_idx].order = -1;
     g_frames[start_idx].state = FRAME_RESERVED_HEAD;
     g_frames[start_idx].pool_id = INVALID_POOL_ID;
+    g_frames[start_idx].ref_count = 0;
     for (i = start_idx + 1; i < end_idx; i++) {
         g_frames[i].order = -1;
         g_frames[i].state = FRAME_RESERVED_TAIL;
         g_frames[i].pool_id = INVALID_POOL_ID;
+        g_frames[i].ref_count = 0;
     }
 }
 
@@ -724,6 +731,7 @@ void mm_init(const void *fdt) {
         g_frames[i].order = -1;
         g_frames[i].state = FRAME_ALLOC_TAIL;
         g_frames[i].pool_id = INVALID_POOL_ID;
+        g_frames[i].ref_count = 0;
         list_init(&g_frames[i].node);
     }
 
@@ -836,6 +844,11 @@ void free(void *ptr) {
 
     // Free page block
     order = g_frames[idx].order;
+    if (g_frames[idx].ref_count > 1) {
+        g_frames[idx].ref_count--;
+        return;
+    }
+    g_frames[idx].ref_count = 0;
     buddy_free_idx(&idx, &order);
     if (g_log_flags & LOGF_VERBOSE) {
         uart_puts("[Page] Free ");
@@ -850,6 +863,50 @@ void free(void *ptr) {
         uart_hex(next_addr_at_order(order));
         uart_putc('\n');
     }
+}
+
+void mm_page_get(void *page) {
+    unsigned long pa;
+    unsigned long idx;
+
+    if (!page || !g_mm_ready)
+        return;
+
+    pa = virt_to_phys((unsigned long)page);
+    if (!in_range_pa(pa) || (pa & (PAGE_SIZE - 1UL)) != 0)
+        return;
+
+    idx = pa_to_idx(pa);
+    if (idx >= g_num_pages || g_frames[idx].state != FRAME_ALLOC_HEAD ||
+        g_frames[idx].order != 0)
+        return;
+
+    g_frames[idx].ref_count++;
+}
+
+void mm_page_put(void *page) {
+    if (!page)
+        return;
+    free(page);
+}
+
+unsigned long mm_page_ref_count(void *page) {
+    unsigned long pa;
+    unsigned long idx;
+
+    if (!page || !g_mm_ready)
+        return 0;
+
+    pa = virt_to_phys((unsigned long)page);
+    if (!in_range_pa(pa) || (pa & (PAGE_SIZE - 1UL)) != 0)
+        return 0;
+
+    idx = pa_to_idx(pa);
+    if (idx >= g_num_pages || g_frames[idx].state != FRAME_ALLOC_HEAD ||
+        g_frames[idx].order != 0)
+        return 0;
+
+    return g_frames[idx].ref_count;
 }
 
 void mm_dump_free_areas(void) {

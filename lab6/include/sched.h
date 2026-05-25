@@ -35,6 +35,10 @@ struct thread {
     unsigned long user_image;
     unsigned long user_image_size;
     unsigned long user_image_alloc_size;
+    unsigned long *user_image_pages;
+    unsigned long user_image_page_count;
+    unsigned long *user_stack_pages;
+    unsigned long user_stack_page_count;
     struct thread *next;
     struct thread *parent;
     int waiting_pid;
@@ -55,6 +59,9 @@ int user_address_space_init(struct thread *t, const void *prog,
                             unsigned long size);
 int user_stack_handle_page_fault(struct thread *t, unsigned long addr,
                                  unsigned long cause);
+int user_cow_handle_page_fault(struct thread *t, unsigned long addr,
+                               unsigned long cause);
+int user_address_space_clone_cow(struct thread *dst, struct thread *src);
 void user_address_space_destroy(struct thread *t);
 struct thread *get_current(void);
 void schedule(void);

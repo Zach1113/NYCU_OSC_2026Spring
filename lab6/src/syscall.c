@@ -250,7 +250,11 @@ static void syscall_exec(struct trapframe *tf) {
     current->user_image = next_space.user_image;
     current->user_image_size = next_space.user_image_size;
     current->user_image_alloc_size = next_space.user_image_alloc_size;
+    current->user_image_pages = next_space.user_image_pages;
+    current->user_image_page_count = next_space.user_image_page_count;
     current->user_stack = next_space.user_stack;
+    current->user_stack_pages = next_space.user_stack_pages;
+    current->user_stack_page_count = next_space.user_stack_page_count;
     current->mmap_regions = next_space.mmap_regions;
 
     zero_bytes(tf, sizeof(*tf));
@@ -281,12 +285,14 @@ static void syscall_fork(struct trapframe *tf) {
     child->user_image = 0;
     child->user_image_size = 0;
     child->user_image_alloc_size = 0;
+    child->user_image_pages = 0;
+    child->user_image_page_count = 0;
     child->user_stack = 0;
+    child->user_stack_pages = 0;
+    child->user_stack_page_count = 0;
     child->signal_stack = 0;
     child->mmap_regions = 0;
-    if (!child->kernel_stack ||
-        !user_address_space_init(child, (const void *)parent->user_image,
-                                 parent->user_image_size)) {
+    if (!child->kernel_stack || !user_address_space_clone_cow(child, parent)) {
         if (child->kernel_stack)
             free((void *)child->kernel_stack);
         user_address_space_destroy(child);
@@ -299,22 +305,6 @@ static void syscall_fork(struct trapframe *tf) {
     scheduler_copy_bytes((void *)child->kernel_stack,
                          (const void *)parent->kernel_stack,
                          KERNEL_STACK_SIZE);
-    scheduler_copy_bytes((void *)child->user_image,
-                         (const void *)parent->user_image,
-                         parent->user_image_alloc_size);
-    scheduler_copy_bytes((void *)child->user_stack,
-                         (const void *)parent->user_stack,
-                         USER_STACK_SIZE);
-
-    if (!user_mmap_clone(child, parent)) {
-        if (child->kernel_stack)
-            free((void *)child->kernel_stack);
-        user_address_space_destroy(child);
-        free(child);
-        tf->a0 = (unsigned long)-1L;
-        tf->sepc += 4;
-        return;
-    }
 
     child->pid = scheduler_next_pid();
     child->status = THREAD_READY;

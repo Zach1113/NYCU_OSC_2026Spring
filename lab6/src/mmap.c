@@ -26,14 +26,6 @@ static void zero_bytes(void *ptr, unsigned long len) {
         *p++ = 0;
 }
 
-static void copy_bytes(void *dst, const void *src, unsigned long len) {
-    unsigned char *d = (unsigned char *)dst;
-    const unsigned char *s = (const unsigned char *)src;
-
-    while (len--)
-        *d++ = *s++;
-}
-
 static unsigned long align_up(unsigned long value, unsigned long align) {
     return (value + align - 1UL) & ~(align - 1UL);
 }
@@ -172,7 +164,7 @@ static void user_mmap_free_region(struct thread *t, struct mmap_region *r,
     if (r->frames) {
         for (i = 0; i < r->page_count; i++) {
             if (r->frames[i])
-                free((void *)r->frames[i]);
+                mm_page_put((void *)r->frames[i]);
         }
         free(r->frames);
     }
@@ -182,8 +174,8 @@ static void user_mmap_free_region(struct thread *t, struct mmap_region *r,
 static int user_mmap_map_page(struct thread *t, struct mmap_region *r,
                               unsigned long page_index,
                               unsigned long existing_frame) {
-    unsigned long va;
-    unsigned long frame;
+    unsigned long va;       // user virtual address
+    unsigned long frame;    // kernel virtual address use to map physical page frame
 
     if (!t || !t->pgd || !r || page_index >= r->page_count)
         return 0;
@@ -191,14 +183,14 @@ static int user_mmap_map_page(struct thread *t, struct mmap_region *r,
     if (existing_frame) {
         frame = existing_frame;
     } else {
-        frame = (unsigned long)alloc(PAGE_SIZE);
+        frame = (unsigned long)alloc(PAGE_SIZE);  // frame is a kernel virtual address of a newly allocated page
         if (!frame)
             return 0;
         zero_bytes((void *)frame, PAGE_SIZE);
     }
 
     va = r->start + page_index * PAGE_SIZE;
-    if (!map_pages((unsigned long *)t->pgd, va, PAGE_SIZE,
+    if (!map_pages((unsigned long *)t->pgd, va, PAGE_SIZE,      // map user virtual address to physical page frame
                    virt_to_phys(frame), mmap_pte_prot(r->prot))) {
         if (!existing_frame)
             free((void *)frame);
@@ -217,6 +209,7 @@ static struct mmap_region *user_mmap_create_region(struct thread *t,
     struct mmap_region *r;
     unsigned long i;
 
+    // allocate and initialize region structure
     r = (struct mmap_region *)alloc(sizeof(*r));
     if (!r)
         return 0;
@@ -234,6 +227,7 @@ static struct mmap_region *user_mmap_create_region(struct thread *t,
     }
     zero_bytes(r->frames, r->page_count * sizeof(unsigned long));
 
+    // if MAP_POPULATE is set, allocate and map all pages immediately
     if (flags & MAP_POPULATE) {
         for (i = 0; i < r->page_count; i++) {
             if (!user_mmap_map_page(t, r, i, 0)) {
@@ -262,24 +256,43 @@ static struct mmap_region *user_mmap_find_region(struct thread *t,
     return 0;
 }
 
-static int user_mmap_clone_page(struct thread *dst,
+static int pte_make_cow(unsigned long *pte) {
+    if (!pte || !(*pte & PTE_V) || !(*pte & PTE_U))
+        return 0;
+    if (*pte & PTE_W)
+        *pte = (*pte & ~PTE_W) | PTE_COW;
+    return 1;
+}
+
+static int user_mmap_share_page(struct thread *dst,
+                                const struct thread *src,
                                 struct mmap_region *clone,
-                                unsigned long page_index,
-                                unsigned long src_frame) {
-    void *frame;
+                                const struct mmap_region *src_region,
+                                unsigned long page_index) {
+    unsigned long src_frame = src_region->frames[page_index];
+    unsigned long va = src_region->start + page_index * PAGE_SIZE;
+    unsigned long *src_pte;
+    unsigned long flags;
 
     if (!src_frame)
         return 1;
 
-    frame = alloc(PAGE_SIZE);
-    if (!frame)
+    src_pte = vm_get_pte((unsigned long *)src->pgd, va, 0);
+    if (!src_pte || !(*src_pte & PTE_V))
         return 0;
-    copy_bytes(frame, (const void *)src_frame, PAGE_SIZE);
 
-    if (!user_mmap_map_page(dst, clone, page_index, (unsigned long)frame)) {
-        free(frame);
+    if (src_region->prot & PROT_WRITE)
+        pte_make_cow(src_pte);
+    flags = *src_pte & PTE_FLAGS_MASK;
+
+    mm_page_get((void *)src_frame);
+    if (!map_pages((unsigned long *)dst->pgd, va, PAGE_SIZE,
+                   virt_to_phys(src_frame), flags)) {
+        mm_page_put((void *)src_frame);
         return 0;
     }
+
+    clone->frames[page_index] = src_frame;
     return 1;
 }
 
@@ -287,9 +300,14 @@ int user_mmap_handle_page_fault(struct thread *t, unsigned long addr,
                                 unsigned long cause) {
     struct mmap_region *r;
     unsigned long page_index;
+    unsigned long va;
 
     r = user_mmap_find_region(t, addr);
     if (!r || !mmap_prot_allows_fault(r->prot, cause))
+        return 0;
+
+    va = addr & ~(PAGE_SIZE - 1UL);
+    if (vm_translate((unsigned long *)t->pgd, va))
         return 0;
 
     page_index = (addr - r->start) / PAGE_SIZE;
@@ -301,6 +319,23 @@ int user_mmap_handle_page_fault(struct thread *t, unsigned long addr,
         return 0;
 
     log_translation_fault(addr);
+    return 1;
+}
+
+int user_mmap_replace_frame(struct thread *t, unsigned long addr,
+                            unsigned long old_frame,
+                            unsigned long new_frame) {
+    struct mmap_region *r = user_mmap_find_region(t, addr);
+    unsigned long page_index;
+
+    if (!r || !(r->prot & PROT_WRITE))
+        return 0;
+
+    page_index = (addr - r->start) / PAGE_SIZE;
+    if (page_index >= r->page_count || r->frames[page_index] != old_frame)
+        return 0;
+
+    r->frames[page_index] = new_frame;
     return 1;
 }
 
@@ -350,11 +385,12 @@ int user_mmap_clone(struct thread *dst, const struct thread *src) {
             return 0;
         clone->flags = r->flags;
         for (i = 0; i < r->page_count; i++) {
-            if (!user_mmap_clone_page(dst, clone, i, r->frames[i]))
+            if (!user_mmap_share_page(dst, src, clone, r, i))
                 return 0;
         }
     }
 
+    vm_flush_tlb();
     return 1;
 }
 

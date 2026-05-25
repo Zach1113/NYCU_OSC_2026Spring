@@ -71,12 +71,96 @@ static void log_translation_fault(unsigned long addr) {
     uart_putc('\n');
 }
 
+static void log_permission_fault(unsigned long addr) {
+    uart_puts("[Permission fault]: ");
+    uart_hex(addr);
+    uart_putc('\n');
+}
+
+static unsigned long min_ulong(unsigned long a, unsigned long b) {
+    return a < b ? a : b;
+}
+
+static unsigned long alloc_zero_page(void) {
+    unsigned long frame = (unsigned long)alloc(PAGE_SIZE);
+
+    if (frame)
+        zero_bytes((void *)frame, PAGE_SIZE);
+    return frame;
+}
+
+static int map_tracked_page(struct thread *t, unsigned long va,
+                            unsigned long frame, unsigned long prot) {
+    return map_pages((unsigned long *)t->pgd, va, PAGE_SIZE,
+                     virt_to_phys(frame), prot);
+}
+
+static int pte_make_cow(unsigned long *pte) {
+    if (!pte || !(*pte & PTE_V) || !(*pte & PTE_U))
+        return 0;
+    if (*pte & PTE_W)
+        *pte = (*pte & ~PTE_W) | PTE_COW;
+    return 1;
+}
+
+static int share_user_page(struct thread *dst, struct thread *src,
+                           unsigned long va, unsigned long frame) {
+    unsigned long *src_pte;
+    unsigned long flags;
+
+    if (!frame)
+        return 1;
+
+    src_pte = vm_get_pte((unsigned long *)src->pgd, va, 0);
+    if (!src_pte || !(*src_pte & PTE_V))
+        return 0;
+
+    pte_make_cow(src_pte);
+    flags = *src_pte & PTE_FLAGS_MASK;
+    mm_page_get((void *)frame);
+    if (!map_pages((unsigned long *)dst->pgd, va, PAGE_SIZE,
+                   virt_to_phys(frame), flags)) {
+        mm_page_put((void *)frame);
+        return 0;
+    }
+    return 1;
+}
+
+static int user_replace_owned_frame(struct thread *t, unsigned long va,
+                                    unsigned long old_frame,
+                                    unsigned long new_frame) {
+    unsigned long idx;
+
+    if (va < t->user_image_alloc_size) {
+        idx = va / PAGE_SIZE;
+        if (idx < t->user_image_page_count &&
+            t->user_image_pages[idx] == old_frame) {
+            t->user_image_pages[idx] = new_frame;
+            return 1;
+        }
+        return 0;
+    }
+
+    if (va >= USER_STACK_BASE && va < USER_STACK_TOP) {
+        idx = (va - USER_STACK_BASE) / PAGE_SIZE;
+        if (idx < t->user_stack_page_count &&
+            t->user_stack_pages[idx] == old_frame) {
+            t->user_stack_pages[idx] = new_frame;
+            return 1;
+        }
+        return 0;
+    }
+
+    return user_mmap_replace_frame(t, va, old_frame, new_frame);
+}
+
 int user_stack_handle_page_fault(struct thread *t, unsigned long addr,
                                  unsigned long cause) {
     unsigned long va;
-    unsigned long offset;
+    unsigned long page_index;
+    unsigned long frame;
 
-    if (!t || !t->pgd || !t->user_stack || !stack_fault_allowed(cause))
+    if (!t || !t->pgd || !t->user_stack_pages || !stack_fault_allowed(cause))
         return 0;
     if (addr < USER_STACK_BASE || addr >= USER_STACK_TOP)
         return 0;
@@ -85,18 +169,77 @@ int user_stack_handle_page_fault(struct thread *t, unsigned long addr,
     if (vm_translate((unsigned long *)t->pgd, va))
         return 0;
 
-    offset = va - USER_STACK_BASE;
-    if (!map_pages((unsigned long *)t->pgd, va, PAGE_SIZE,
-                   virt_to_phys(t->user_stack + offset), PROT_USER_RW))
+    page_index = (va - USER_STACK_BASE) / PAGE_SIZE;
+    if (page_index >= t->user_stack_page_count)
         return 0;
 
+    frame = t->user_stack_pages[page_index];
+    if (!frame) {
+        frame = alloc_zero_page();
+        if (!frame)
+            return 0;
+        t->user_stack_pages[page_index] = frame;
+    }
+
+    if (!map_tracked_page(t, va, frame, PROT_USER_RW)) {
+        if (t->user_stack_pages[page_index] == frame) {
+            t->user_stack_pages[page_index] = 0;
+            mm_page_put((void *)frame);
+        }
+        return 0;
+    }
+
     log_translation_fault(addr);
+    return 1;
+}
+
+int user_cow_handle_page_fault(struct thread *t, unsigned long addr,
+                               unsigned long cause) {
+    unsigned long va;
+    unsigned long *pte;
+    unsigned long old_frame;
+    unsigned long new_frame;
+    unsigned long flags;
+
+    if (!t || !t->pgd || cause != SCAUSE_STORE_PAGE_FAULT)
+        return 0;
+
+    va = align_down(addr, PAGE_SIZE);
+    pte = vm_get_pte((unsigned long *)t->pgd, va, 0);
+    if (!pte || !(*pte & PTE_V) || !(*pte & PTE_COW))
+        return 0;
+
+    old_frame = phys_to_virt(vm_pte_pa(*pte));
+    log_permission_fault(addr);
+
+    if (mm_page_ref_count((void *)old_frame) <= 1) {
+        *pte = (*pte | PTE_W) & ~PTE_COW;
+        vm_flush_tlb();
+        return 1;
+    }
+
+    new_frame = (unsigned long)alloc(PAGE_SIZE);
+    if (!new_frame)
+        return 0;
+    copy_bytes((void *)new_frame, (const void *)old_frame, PAGE_SIZE);
+
+    if (!user_replace_owned_frame(t, va, old_frame, new_frame)) {
+        free((void *)new_frame);
+        return 0;
+    }
+
+    flags = ((*pte & PTE_FLAGS_MASK) | PTE_W) & ~PTE_COW;
+    *pte = vm_make_pte(virt_to_phys(new_frame), flags);
+    mm_page_put((void *)old_frame);
+    vm_flush_tlb();
     return 1;
 }
 
 int user_address_space_init(struct thread *t, const void *prog,
                             unsigned long size) {
     unsigned long image_size;
+    unsigned long i;
+    unsigned long stack_top_index;
 
     if (!t || !prog || size == 0)
         return 0;
@@ -110,33 +253,127 @@ int user_address_space_init(struct thread *t, const void *prog,
         return 0;
     t->pgd_pa = virt_to_phys(t->pgd);
 
-    t->user_image = (unsigned long)alloc(image_size);
-    t->user_stack = (unsigned long)alloc(USER_STACK_SIZE);
-    if (!t->user_image || !t->user_stack) {
-        user_address_space_destroy(t);
-        return 0;
-    }
-
-    zero_bytes((void *)t->user_image, image_size);
-    zero_bytes((void *)t->user_stack, USER_STACK_SIZE);
-    copy_bytes((void *)t->user_image, prog, size);
-
-    if (!map_pages((unsigned long *)t->pgd, 0, image_size,
-                   virt_to_phys(t->user_image), PROT_USER_RWX) ||
-        !map_pages((unsigned long *)t->pgd, USER_STACK_TOP - PAGE_SIZE,
-                   PAGE_SIZE,
-                   virt_to_phys(t->user_stack + USER_STACK_SIZE - PAGE_SIZE),
-                   PROT_USER_RW)) {
-        user_address_space_destroy(t);
-        return 0;
-    }
-
     t->user_image_size = size;
     t->user_image_alloc_size = image_size;
+    t->user_image_page_count = image_size / PAGE_SIZE;
+    t->user_stack_page_count = USER_STACK_SIZE / PAGE_SIZE;
+
+    t->user_image_pages = (unsigned long *)alloc(t->user_image_page_count *
+                                                 sizeof(unsigned long));
+    t->user_stack_pages = (unsigned long *)alloc(t->user_stack_page_count *
+                                                 sizeof(unsigned long));
+    if (!t->user_image_pages || !t->user_stack_pages) {
+        user_address_space_destroy(t);
+        return 0;
+    }
+    zero_bytes(t->user_image_pages,
+               t->user_image_page_count * sizeof(unsigned long));
+    zero_bytes(t->user_stack_pages,
+               t->user_stack_page_count * sizeof(unsigned long));
+
+    for (i = 0; i < t->user_image_page_count; i++) {
+        unsigned long frame = alloc_zero_page();
+        unsigned long copied = i * PAGE_SIZE;
+        unsigned long copy_len = 0;
+
+        if (!frame) {
+            user_address_space_destroy(t);
+            return 0;
+        }
+        if (copied < size)
+            copy_len = min_ulong(PAGE_SIZE, size - copied);
+        if (copy_len)
+            copy_bytes((void *)frame, (const char *)prog + copied, copy_len);
+        t->user_image_pages[i] = frame;
+        if (!map_tracked_page(t, i * PAGE_SIZE, frame, PROT_USER_RWX)) {
+            user_address_space_destroy(t);
+            return 0;
+        }
+    }
+
+    stack_top_index = t->user_stack_page_count - 1;
+    t->user_stack_pages[stack_top_index] = alloc_zero_page();
+    if (!t->user_stack_pages[stack_top_index] ||
+        !map_tracked_page(t, USER_STACK_TOP - PAGE_SIZE,
+                          t->user_stack_pages[stack_top_index],
+                          PROT_USER_RW)) {
+        user_address_space_destroy(t);
+        return 0;
+    }
+
+    t->user_image = t->user_image_pages[0];
+    t->user_stack = t->user_stack_pages[0];
+    return 1;
+}
+
+int user_address_space_clone_cow(struct thread *dst, struct thread *src) {
+    unsigned long i;
+
+    if (!dst || !src || !src->pgd)
+        return 0;
+
+    dst->pgd = (unsigned long)vm_create_user_pgd();
+    if (!dst->pgd)
+        return 0;
+    dst->pgd_pa = virt_to_phys(dst->pgd);
+
+    dst->user_image_size = src->user_image_size;
+    dst->user_image_alloc_size = src->user_image_alloc_size;
+    dst->user_image_page_count = src->user_image_page_count;
+    dst->user_stack_page_count = src->user_stack_page_count;
+
+    dst->user_image_pages = (unsigned long *)alloc(dst->user_image_page_count *
+                                                   sizeof(unsigned long));
+    dst->user_stack_pages = (unsigned long *)alloc(dst->user_stack_page_count *
+                                                   sizeof(unsigned long));
+    if (!dst->user_image_pages || !dst->user_stack_pages) {
+        user_address_space_destroy(dst);
+        return 0;
+    }
+    zero_bytes(dst->user_image_pages,
+               dst->user_image_page_count * sizeof(unsigned long));
+    zero_bytes(dst->user_stack_pages,
+               dst->user_stack_page_count * sizeof(unsigned long));
+
+    for (i = 0; i < src->user_image_page_count; i++) {
+        unsigned long frame = src->user_image_pages[i];
+
+        if (!frame)
+            continue;
+        if (!share_user_page(dst, src, i * PAGE_SIZE, frame)) {
+            user_address_space_destroy(dst);
+            return 0;
+        }
+        dst->user_image_pages[i] = frame;
+    }
+
+    for (i = 0; i < src->user_stack_page_count; i++) {
+        unsigned long frame = src->user_stack_pages[i];
+        unsigned long va = USER_STACK_BASE + i * PAGE_SIZE;
+
+        if (!frame)
+            continue;
+        if (!share_user_page(dst, src, va, frame)) {
+            user_address_space_destroy(dst);
+            return 0;
+        }
+        dst->user_stack_pages[i] = frame;
+    }
+
+    if (!user_mmap_clone(dst, src)) {
+        user_address_space_destroy(dst);
+        return 0;
+    }
+
+    dst->user_image = dst->user_image_page_count ? dst->user_image_pages[0] : 0;
+    dst->user_stack = dst->user_stack_page_count ? dst->user_stack_pages[0] : 0;
+    vm_flush_tlb();
     return 1;
 }
 
 void user_address_space_destroy(struct thread *t) {
+    unsigned long i;
+
     if (!t)
         return;
 
@@ -146,10 +383,10 @@ void user_address_space_destroy(struct thread *t) {
         if (t->signal_stack)
             unmap_pages((unsigned long *)t->pgd, USER_SIGNAL_STACK_BASE,
                         USER_STACK_SIZE);
-        if (t->user_stack)
+        if (t->user_stack_pages)
             unmap_pages((unsigned long *)t->pgd, USER_STACK_BASE,
                         USER_STACK_SIZE);
-        if (t->user_image)
+        if (t->user_image_pages)
             unmap_pages((unsigned long *)t->pgd, 0,
                         t->user_image_alloc_size);
     }
@@ -158,21 +395,36 @@ void user_address_space_destroy(struct thread *t) {
         free((void *)t->signal_stack);
         t->signal_stack = 0;
     }
-    if (t->user_stack) {
-        free((void *)t->user_stack);
-        t->user_stack = 0;
+
+    if (t->user_stack_pages) {
+        for (i = 0; i < t->user_stack_page_count; i++) {
+            if (t->user_stack_pages[i])
+                mm_page_put((void *)t->user_stack_pages[i]);
+        }
+        free(t->user_stack_pages);
+        t->user_stack_pages = 0;
     }
-    if (t->user_image) {
-        free((void *)t->user_image);
-        t->user_image = 0;
+
+    if (t->user_image_pages) {
+        for (i = 0; i < t->user_image_page_count; i++) {
+            if (t->user_image_pages[i])
+                mm_page_put((void *)t->user_image_pages[i]);
+        }
+        free(t->user_image_pages);
+        t->user_image_pages = 0;
     }
+
     if (t->pgd) {
         vm_free_user_pgd((unsigned long *)t->pgd);
         t->pgd = 0;
         t->pgd_pa = 0;
     }
+    t->user_stack = 0;
+    t->user_image = 0;
     t->user_image_size = 0;
     t->user_image_alloc_size = 0;
+    t->user_image_page_count = 0;
+    t->user_stack_page_count = 0;
 }
 
 static void enqueue_thread(struct thread *t) {

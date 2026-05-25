@@ -37,11 +37,11 @@ static void zero_page(void *ptr) {
         p[i] = 0;
 }
 
-static unsigned long make_pte(unsigned long pa, unsigned long flags) {
+unsigned long vm_make_pte(unsigned long pa, unsigned long flags) {
     return ((pa >> 12) << PTE_PPN_SHIFT) | flags;
 }
 
-static unsigned long pte_pa(unsigned long pte) {
+unsigned long vm_pte_pa(unsigned long pte) {
     return (pte >> PTE_PPN_SHIFT) << 12;
 }
 
@@ -61,9 +61,9 @@ static void map_2m_range(unsigned long *pgd, unsigned long *pmd,
     unsigned long cur_pa = align_down(pa, BLOCK_2M_SIZE);
     unsigned long pgd_idx = vpn_index(cur_va, 2);
 
-    pgd[pgd_idx] = make_pte((unsigned long)pmd, PTE_V);
+    pgd[pgd_idx] = vm_make_pte((unsigned long)pmd, PTE_V);
     while (cur_va < end) {
-        pmd[vpn_index(cur_va, 1)] = make_pte(cur_pa, prot);
+        pmd[vpn_index(cur_va, 1)] = vm_make_pte(cur_pa, prot);
         cur_va += BLOCK_2M_SIZE;
         cur_pa += BLOCK_2M_SIZE;
     }
@@ -99,18 +99,18 @@ static int map_4k_range_early(unsigned long *pgd, unsigned long va,
 
         pmd = g_kernel_pmd[pgd_idx - PGD_KERNEL_BASE];
         if (!(pgd[pgd_idx] & PTE_V))
-            pgd[pgd_idx] = make_pte((unsigned long)pmd, PTE_V);
+            pgd[pgd_idx] = vm_make_pte((unsigned long)pmd, PTE_V);
 
         if (!(pmd[pmd_idx] & PTE_V)) {
             pte = early_alloc_pte();
             if (!pte)
                 return 0;
-            pmd[pmd_idx] = make_pte((unsigned long)pte, PTE_V);
+            pmd[pmd_idx] = vm_make_pte((unsigned long)pte, PTE_V);
         } else {
-            pte = (unsigned long *)pte_pa(pmd[pmd_idx]);
+            pte = (unsigned long *)vm_pte_pa(pmd[pmd_idx]);
         }
 
-        pte[pte_idx] = make_pte(cur_pa, prot);
+        pte[pte_idx] = vm_make_pte(cur_pa, prot);
         start += PAGE_SIZE;
         cur_pa += PAGE_SIZE;
     }
@@ -122,15 +122,18 @@ void setup_vm(unsigned long fdt_pa) {
     unsigned long i;
     (void)fdt_pa;
 
+    // clear pages for kernel pgd, identity pmd, kernel pmds, and early ptes
     g_early_pte_next = 0;
     zero_page(g_kernel_pgd);
     zero_page(g_identity_pmd);
     for (i = 0; i < 4; i++)
         zero_page(g_kernel_pmd[i]);
 
+    // identity mapping
     map_2m_range(g_kernel_pgd, g_identity_pmd, 0, 0, BLOCK_1G_SIZE,
                  PROT_KERNEL);
 
+    // higher half kernel mapping
     for (i = 0; i < 2; i++) {
         unsigned long va = KERNEL_OFFSET + i * BLOCK_1G_SIZE;
         unsigned long pa = i * BLOCK_1G_SIZE;
@@ -139,11 +142,13 @@ void setup_vm(unsigned long fdt_pa) {
                      BLOCK_1G_SIZE, PROT_KERNEL);
     }
 
+    // map UART and PLIC
     map_4k_range_early(g_kernel_pgd, phys_to_virt(BOARD_UART_PA),
                        BOARD_UART_PA, BOARD_UART_SIZE, PROT_MMIO);
     map_4k_range_early(g_kernel_pgd, phys_to_virt(BOARD_PLIC_PA),
                        BOARD_PLIC_PA, BOARD_PLIC_SIZE, PROT_MMIO);
 
+    // set satp to enable paging
     asm volatile(
         "csrw satp, %0\n"
         "sfence.vma zero, zero\n"
@@ -181,7 +186,7 @@ static unsigned long *next_table(unsigned long *table, unsigned long va,
     unsigned long *next;
 
     if (pte & PTE_V)
-        return (unsigned long *)phys_to_virt(pte_pa(pte));
+        return (unsigned long *)phys_to_virt(vm_pte_pa(pte));
 
     if (!alloc_table)
         return 0;
@@ -190,8 +195,23 @@ static unsigned long *next_table(unsigned long *table, unsigned long va,
     if (!next)
         return 0;
     zero_page(next);
-    table[idx] = make_pte(virt_to_phys((unsigned long)next), PTE_V);
+    table[idx] = vm_make_pte(virt_to_phys((unsigned long)next), PTE_V);
     return next;
+}
+
+unsigned long *vm_get_pte(unsigned long *pgd, unsigned long va,
+                          int alloc_table) {
+    unsigned long *pmd;
+    unsigned long *pte;
+
+    if (!pgd)
+        return 0;
+
+    pmd = next_table(pgd, va, 2, alloc_table);
+    pte = pmd ? next_table(pmd, va, 1, alloc_table) : 0;
+    if (!pte)
+        return 0;
+    return &pte[vpn_index(va, 0)];
 }
 
 int map_pages(unsigned long *pgd, unsigned long va, unsigned long size,
@@ -212,7 +232,7 @@ int map_pages(unsigned long *pgd, unsigned long va, unsigned long size,
 
         if (!pte)
             return 0;
-        pte[vpn_index(start, 0)] = make_pte(pa, prot);
+        pte[vpn_index(start, 0)] = vm_make_pte(pa, prot);
         start += PAGE_SIZE;
         pa += PAGE_SIZE;
     }
@@ -255,9 +275,9 @@ unsigned long vm_translate(unsigned long *pgd, unsigned long va) {
             return 0;
         if (pte_is_leaf(pte)) {
             unsigned long off_mask = (1UL << (12 + 9 * level)) - 1UL;
-            return pte_pa(pte) + (va & off_mask);
+            return vm_pte_pa(pte) + (va & off_mask);
         }
-        table = (unsigned long *)phys_to_virt(pte_pa(pte));
+        table = (unsigned long *)phys_to_virt(vm_pte_pa(pte));
     }
 
     return 0;
@@ -285,9 +305,9 @@ static void free_low_half_tables(unsigned long *table, int level) {
 
         if (!(pte & PTE_V) || pte_is_leaf(pte))
             continue;
-        free_low_half_tables((unsigned long *)phys_to_virt(pte_pa(pte)),
+        free_low_half_tables((unsigned long *)phys_to_virt(vm_pte_pa(pte)),
                              level - 1);
-        free((void *)phys_to_virt(pte_pa(pte)));
+        free((void *)phys_to_virt(vm_pte_pa(pte)));
         table[i] = 0;
     }
 }
@@ -297,4 +317,8 @@ void vm_free_user_pgd(unsigned long *pgd) {
         return;
     free_low_half_tables(pgd, 2);
     free(pgd);
+}
+
+void vm_flush_tlb(void) {
+    asm volatile("sfence.vma zero, zero" ::: "memory");
 }

@@ -21,6 +21,9 @@
 #define PTE_G  (1UL << 5)
 #define PTE_A  (1UL << 6)
 #define PTE_D  (1UL << 7)
+#define PTE_COW (1UL << 8)
+
+#define PTE_FLAGS_MASK 0x3ffUL
 
 #define PROT_KERNEL (PTE_V | PTE_R | PTE_W | PTE_X | PTE_G | PTE_A | PTE_D)
 #define PROT_MMIO   (PTE_V | PTE_R | PTE_W | PTE_G | PTE_A | PTE_D)
@@ -51,5 +54,10 @@ int map_pages(unsigned long *pgd, unsigned long va, unsigned long size,
               unsigned long pa, unsigned long prot);
 void unmap_pages(unsigned long *pgd, unsigned long va, unsigned long size);
 unsigned long vm_translate(unsigned long *pgd, unsigned long va);
+unsigned long vm_make_pte(unsigned long pa, unsigned long flags);
+unsigned long vm_pte_pa(unsigned long pte);
+unsigned long *vm_get_pte(unsigned long *pgd, unsigned long va,
+                          int alloc_table);
+void vm_flush_tlb(void);
 
 #endif
