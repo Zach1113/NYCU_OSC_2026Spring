@@ -57,11 +57,11 @@ static unsigned long mmap_pte_prot(int prot) {
 }
 
 static int mmap_prot_allows_fault(int prot, unsigned long cause) {
-    if (cause == SCAUSE_INST_PAGE_FAULT)
+    if (cause == SCAUSE_INST_PAGE_FAULT) // if the page fault is caused by instruction fetch, check if the region has PROT_EXEC permission
         return (prot & PROT_EXEC) != 0;
-    if (cause == SCAUSE_LOAD_PAGE_FAULT)
+    if (cause == SCAUSE_LOAD_PAGE_FAULT) // if the page fault is caused by load, check if the region has PROT_READ or PROT_WRITE permission
         return (prot & (PROT_READ | PROT_WRITE)) != 0;
-    if (cause == SCAUSE_STORE_PAGE_FAULT)
+    if (cause == SCAUSE_STORE_PAGE_FAULT) // if the page fault is caused by store, check if the region has PROT_WRITE permission
         return (prot & PROT_WRITE) != 0;
     return 0;
 }
@@ -302,20 +302,20 @@ int user_mmap_handle_page_fault(struct thread *t, unsigned long addr,
     unsigned long page_index;
     unsigned long va;
 
-    r = user_mmap_find_region(t, addr);
+    r = user_mmap_find_region(t, addr); // find the memory region that contains the faulting address
     if (!r || !mmap_prot_allows_fault(r->prot, cause))
         return 0;
 
     va = addr & ~(PAGE_SIZE - 1UL);
-    if (vm_translate((unsigned long *)t->pgd, va))
+    if (vm_translate((unsigned long *)t->pgd, va))  // check if the faulting address is already mapped, should return 0 for mmap demand paging case
         return 0;
 
     page_index = (addr - r->start) / PAGE_SIZE;
     if (page_index >= r->page_count)
         return 0;
 
-    if (!r->frames[page_index] &&
-        !user_mmap_map_page(t, r, page_index, 0))
+    if (!r->frames[page_index] &&                   // if frames[page_index] == 0, it means the page is not allocated and mapped yet
+        !user_mmap_map_page(t, r, page_index, 0))   // call user_mmap_map_page to allocate a new page and map it to the faulting address
         return 0;
 
     log_translation_fault(addr);

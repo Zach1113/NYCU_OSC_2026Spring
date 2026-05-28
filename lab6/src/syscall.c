@@ -6,6 +6,7 @@
 #include "sched.h"
 #include "timer.h"
 #include "uart.h"
+#include "user_vm.h"
 #include "video.h"
 #include "vm.h"
 

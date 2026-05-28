@@ -7,6 +7,7 @@
 #include "task.h"
 #include "timer.h"
 #include "uart.h"
+#include "user_vm.h"
 
 #define SCAUSE_INTERRUPT_BIT (1UL << 63)
 #define SCAUSE_ECALL_UMODE       8UL
@@ -102,6 +103,7 @@ void trap_handler(struct trapframe *tf) {
     if ((scause & SCAUSE_INTERRUPT_BIT) == 0 && is_page_fault(cause) &&
         get_current() && get_current()->is_user) {
         if (user_cow_handle_page_fault(get_current(), stval, cause) ||
+            user_image_handle_page_fault(get_current(), stval, cause) ||
             user_stack_handle_page_fault(get_current(), stval, cause) ||
             user_mmap_handle_page_fault(get_current(), stval, cause))
             return;
