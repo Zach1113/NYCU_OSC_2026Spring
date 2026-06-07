@@ -8,6 +8,8 @@
 #define MAX_SIGNALS       32
 
 struct mmap_region;
+struct file;
+struct vnode;
 
 enum thread_status {
     THREAD_RUNNING,
@@ -49,6 +51,9 @@ struct thread {
     struct trapframe signal_saved_tf;
     unsigned long signal_stack;
     struct mmap_region *mmap_regions;
+    struct vnode *root;
+    struct vnode *cwd;
+    struct file *fd_table[16];
 };
 
 void scheduler_init(void);

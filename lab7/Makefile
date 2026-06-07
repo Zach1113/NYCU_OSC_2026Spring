@@ -38,7 +38,8 @@ KERNEL_ASMFILES = $(wildcard $(KERNELDIR)/*.S)
 KERNEL_CFILES   = $(wildcard $(KERNELDIR)/*.c)
 KERNEL_SHARED_CFILES = $(SRCDIR)/uart.c $(SRCDIR)/fdt.c $(SRCDIR)/cpio.c $(SRCDIR)/mm.c $(SRCDIR)/vm.c \
 			      $(SRCDIR)/timer.c $(SRCDIR)/plic.c $(SRCDIR)/task.c \
-			      $(SRCDIR)/sched.c $(SRCDIR)/user_vm.c $(SRCDIR)/syscall.c $(SRCDIR)/mmap.c $(SRCDIR)/video.c
+			      $(SRCDIR)/sched.c $(SRCDIR)/user_vm.c $(SRCDIR)/syscall.c $(SRCDIR)/mmap.c $(SRCDIR)/video.c \
+                  $(SRCDIR)/vfs.c $(SRCDIR)/tmpfs.c $(SRCDIR)/ramfs.c
 KERNEL_OBJFILES = $(KERNEL_ASMFILES:.S=.o) \
                   $(KERNEL_CFILES:.c=.o) \
                   $(KERNEL_SHARED_CFILES:.c=.o)

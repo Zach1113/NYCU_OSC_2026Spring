@@ -8,6 +8,7 @@
 #include "uart.h"
 #include "user_vm.h"
 #include "video.h"
+#include "vfs.h"
 #include "vm.h"
 
 #define SYS_GETPID     0UL
@@ -24,6 +25,13 @@
 #define SYS_SIGRETURN  11UL
 #define SYS_KILL       12UL
 #define SYS_MMAP       13UL
+#define SYS_OPEN       14UL
+#define SYS_CLOSE      15UL
+#define SYS_READ       16UL
+#define SYS_WRITE      17UL
+#define SYS_MKDIR      18UL
+#define SYS_MOUNT      19UL
+#define SYS_CHDIR      20UL
 
 #define SSTATUS_SPP    (1UL << 8)
 #define SIGRETURN_INST_ADD_A7 0x00b00893U
@@ -108,6 +116,7 @@ static void terminate_thread_for_signal(struct thread *t) {
         return;
 
     uart_release_owner(t->pid);
+    vfs_thread_cleanup(t);
     t->status = THREAD_TERMINATED;
     scheduler_wake_parent_of(t);
     if (t == get_current())
@@ -315,6 +324,7 @@ static void syscall_fork(struct trapframe *tf) {
     child->signal_active = 0;
     child->signal_stack = 0;
     zero_bytes(&child->signal_saved_tf, sizeof(child->signal_saved_tf));
+    vfs_thread_clone(child, parent);
 
     kernel_offset = child->kernel_stack - parent->kernel_stack;
     child_tf = (struct trapframe *)((unsigned long)tf + kernel_offset);
@@ -375,6 +385,7 @@ static void syscall_stop(struct trapframe *tf) {
     }
 
     uart_release_owner(target->pid);
+    vfs_thread_cleanup(target);
     target->status = THREAD_TERMINATED;
     scheduler_wake_parent_of(target);
     if (target == get_current())
@@ -507,6 +518,146 @@ static void syscall_mmap(struct trapframe *tf) {
     tf->sepc += 4;
 }
 
+
+static int copy_user_path(char *dst, const char *src) {
+    unsigned long i;
+
+    if (!dst || !src)
+        return VFS_EINVAL;
+    for (i = 0; i <= VFS_MAX_PATH; i++) {
+        dst[i] = src[i];
+        if (src[i] == 0)
+            return 0;
+    }
+    dst[VFS_MAX_PATH] = 0;
+    return VFS_ENAMETOOLONG;
+}
+
+static int fd_alloc(struct thread *t, struct file *file) {
+    int fd;
+
+    if (!t || !file)
+        return VFS_EINVAL;
+    for (fd = 0; fd < VFS_MAX_FD; fd++) {
+        if (!t->fd_table[fd]) {
+            t->fd_table[fd] = file;
+            return fd;
+        }
+    }
+    return VFS_ENFILE;
+}
+
+static struct file *fd_get(struct thread *t, int fd) {
+    if (!t || fd < 0 || fd >= VFS_MAX_FD)
+        return 0;
+    return t->fd_table[fd];
+}
+
+static void syscall_open(struct trapframe *tf) {
+    char path[VFS_MAX_PATH + 1];
+    struct file *file = 0;
+    int ret;
+
+    ret = copy_user_path(path, (const char *)tf->a0);
+    if (ret == 0)
+        ret = vfs_open(path, (int)tf->a1, &file);
+    if (ret == 0) {
+        ret = fd_alloc(get_current(), file);
+        if (ret < 0)
+            vfs_close(file);
+    }
+    tf->a0 = (unsigned long)(long)ret;
+    tf->sepc += 4;
+}
+
+static void syscall_close_fd(struct trapframe *tf) {
+    int fd = (int)tf->a0;
+    struct thread *current = get_current();
+    struct file *file = fd_get(current, fd);
+    int ret;
+
+    if (!file) {
+        tf->a0 = (unsigned long)(long)VFS_EBADF;
+        tf->sepc += 4;
+        return;
+    }
+
+    current->fd_table[fd] = 0;
+    ret = vfs_close(file);
+    tf->a0 = (unsigned long)(long)ret;
+    tf->sepc += 4;
+}
+
+static void syscall_read_fd(struct trapframe *tf) {
+    int fd = (int)tf->a0;
+    void *buf = (void *)tf->a1;
+    unsigned long count = tf->a2;
+    struct file *file = fd_get(get_current(), fd);
+    int ret;
+
+    if (!file)
+        ret = VFS_EBADF;
+    else
+        ret = vfs_read(file, buf, count);
+    tf->a0 = (unsigned long)(long)ret;
+    tf->sepc += 4;
+}
+
+static void syscall_write_fd(struct trapframe *tf) {
+    int fd = (int)tf->a0;
+    const void *buf = (const void *)tf->a1;
+    unsigned long count = tf->a2;
+    struct file *file = fd_get(get_current(), fd);
+    int ret;
+
+    if (!file)
+        ret = VFS_EBADF;
+    else
+        ret = vfs_write(file, buf, count);
+    tf->a0 = (unsigned long)(long)ret;
+    tf->sepc += 4;
+}
+
+static void syscall_mkdir_fd(struct trapframe *tf) {
+    char path[VFS_MAX_PATH + 1];
+    int ret;
+
+    (void)tf->a1;
+    ret = copy_user_path(path, (const char *)tf->a0);
+    if (ret == 0)
+        ret = vfs_mkdir(path);
+    tf->a0 = (unsigned long)(long)ret;
+    tf->sepc += 4;
+}
+
+static void syscall_mount_fd(struct trapframe *tf) {
+    char target[VFS_MAX_PATH + 1];
+    char filesystem[VFS_MAX_PATH + 1];
+    int ret;
+
+    (void)tf->a0;
+    (void)tf->a3;
+    (void)tf->a4;
+    ret = copy_user_path(target, (const char *)tf->a1);
+    if (ret == 0)
+        ret = copy_user_path(filesystem, (const char *)tf->a2);
+    if (ret == 0)
+        ret = vfs_mount(target, filesystem);
+    tf->a0 = (unsigned long)(long)ret;
+    tf->sepc += 4;
+}
+
+static void syscall_chdir_fd(struct trapframe *tf) {
+    char path[VFS_MAX_PATH + 1];
+    int ret;
+
+    ret = copy_user_path(path, (const char *)tf->a0);
+    if (ret == 0)
+        ret = vfs_chdir(path);
+    tf->a0 = (unsigned long)(long)ret;
+    tf->sepc += 4;
+}
+
 void signal_deliver(struct trapframe *tf) {
     struct thread *current = get_current();
     unsigned int *trampoline;
@@ -601,6 +752,27 @@ void syscall_handle(struct trapframe *tf) {
         break;
     case SYS_MMAP:
         syscall_mmap(tf);
+        break;
+    case SYS_OPEN:
+        syscall_open(tf);
+        break;
+    case SYS_CLOSE:
+        syscall_close_fd(tf);
+        break;
+    case SYS_READ:
+        syscall_read_fd(tf);
+        break;
+    case SYS_WRITE:
+        syscall_write_fd(tf);
+        break;
+    case SYS_MKDIR:
+        syscall_mkdir_fd(tf);
+        break;
+    case SYS_MOUNT:
+        syscall_mount_fd(tf);
+        break;
+    case SYS_CHDIR:
+        syscall_chdir_fd(tf);
         break;
     default:
         uart_puts("[syscall] unknown syscall: ");

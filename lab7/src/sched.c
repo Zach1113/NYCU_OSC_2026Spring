@@ -4,6 +4,7 @@
 #include "mm.h"
 #include "uart.h"
 #include "user_vm.h"
+#include "vfs.h"
 #include "vm.h"
 
 #define SSTATUS_SPP  (1UL << 8)
@@ -76,6 +77,7 @@ void scheduler_init(void) {
     idle.pid = 0;
     idle.status = THREAD_RUNNING;
     idle.waiting_pid = -1;
+    vfs_thread_init(&idle);
 
     g_run_queue = 0;
     g_idle_thread = &idle;
@@ -116,6 +118,7 @@ struct thread *thread_create(void (*fn)(void)) {
     t->pid = g_next_pid++;
     t->status = THREAD_READY;
     t->waiting_pid = -1;
+    vfs_thread_init(t);
     t->context.ra = (unsigned long)thread_bootstrap;
     t->context.sp = t->kernel_stack + KERNEL_STACK_SIZE;
     t->context.s[0] = (unsigned long)fn;
@@ -154,6 +157,7 @@ static struct thread *user_process_create_from_image(const void *prog,
     t->status = THREAD_READY;
     t->parent = get_current();
     t->waiting_pid = -1;
+    vfs_thread_init(t);
 
     tf = (struct trapframe *)(t->kernel_stack + KERNEL_STACK_SIZE -
                               sizeof(struct trapframe));
@@ -246,6 +250,9 @@ void thread_exit(void) {
     unsigned long flags;
     struct thread *current = get_current();
 
+    if (current && current != g_idle_thread)
+        vfs_thread_cleanup(current);
+
     flags = irq_save();
     if (current && current != g_idle_thread) {
         current->status = THREAD_TERMINATED;
@@ -284,6 +291,7 @@ void kill_zombies(void) {
                 g_run_queue = prev;
             cur = cur->next;
 
+            vfs_thread_cleanup(dead);
             if (dead->kernel_stack)
                 free((void *)dead->kernel_stack);
             user_address_space_destroy(dead);
