@@ -1,9 +1,11 @@
 #include "video.h"
 
+#include "vfs.h"
 #include "vm.h"
 
 #define FB_WIDTH  1920U
 #define FB_HEIGHT 1080U
+#define FB_BPP    4U
 
 #ifdef QEMU
 #define FB_BASE 0xfe000000UL
@@ -23,6 +25,14 @@ static void cbo_flush(unsigned long start) {
 }
 #endif
 
+static void copy_bytes(void *dst, const void *src, unsigned long len) {
+    unsigned char *d = (unsigned char *)dst;
+    const unsigned char *s = (const unsigned char *)src;
+
+    while (len--)
+        *d++ = *s++;
+}
+
 static void flush_dcache(void *addr, unsigned long len) {
 #ifndef QEMU
     unsigned long start = (unsigned long)addr & ~(CACHE_BLOCK_SIZE - 1UL);
@@ -39,11 +49,51 @@ static void flush_dcache(void *addr, unsigned long len) {
 #endif
 }
 
+static unsigned char *framebuffer_base(void) {
+    return (unsigned char *)phys_to_virt(FB_BASE);
+}
+
 void video_init(void) {
 }
 
-void video_display(unsigned int *bmp_image, unsigned int width, unsigned int height) {
-    unsigned int *fb = (unsigned int *)phys_to_virt(FB_BASE);
+void video_framebuffer_info(struct framebuffer_info *info) {
+    if (!info)
+        return;
+    info->width = FB_WIDTH;
+    info->height = FB_HEIGHT;
+    info->bpp = FB_BPP;
+}
+
+unsigned long video_framebuffer_size(void) {
+    return (unsigned long)FB_WIDTH * (unsigned long)FB_HEIGHT *
+           (unsigned long)FB_BPP;
+}
+
+int video_framebuffer_write(unsigned long offset, const void *buf,
+                            unsigned long len) {
+    unsigned long size = video_framebuffer_size();
+    unsigned long writable;
+    unsigned char *dst;
+
+    if (len && !buf)
+        return VFS_EINVAL;
+    if (len == 0)
+        return 0;
+    if (offset >= size)
+        return VFS_ENOSPC;
+
+    writable = size - offset;
+    if (writable > len)
+        writable = len;
+
+    dst = framebuffer_base() + offset;
+    copy_bytes(dst, buf, writable);
+    flush_dcache(dst, writable);
+    return (int)writable;
+}
+
+void video_display(unsigned int *bmp_image, unsigned int width,
+                   unsigned int height) {
     unsigned int copy_w;
     unsigned int copy_h;
     unsigned int dst_x;
@@ -63,12 +113,11 @@ void video_display(unsigned int *bmp_image, unsigned int width, unsigned int hei
     src_y = (height - copy_h) / 2U;
 
     for (y = 0; y < copy_h; y++) {
-        unsigned int x;
-        unsigned int *dst = fb + (dst_y + y) * FB_WIDTH + dst_x;
         unsigned int *src = bmp_image + (src_y + y) * width + src_x;
+        unsigned long offset =
+            ((unsigned long)(dst_y + y) * FB_WIDTH + dst_x) * FB_BPP;
 
-        for (x = 0; x < copy_w; x++)
-            dst[x] = src[x];
-        flush_dcache(dst, (unsigned long)copy_w * sizeof(unsigned int));
+        video_framebuffer_write(offset, src,
+                                (unsigned long)copy_w * FB_BPP);
     }
 }

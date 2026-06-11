@@ -32,6 +32,8 @@
 #define SYS_MKDIR      18UL
 #define SYS_MOUNT      19UL
 #define SYS_CHDIR      20UL
+#define SYS_LSEEK64    21UL
+#define SYS_IOCTL      22UL
 
 #define SSTATUS_SPP    (1UL << 8)
 #define SIGRETURN_INST_ADD_A7 0x00b00893U
@@ -658,6 +660,36 @@ static void syscall_chdir_fd(struct trapframe *tf) {
     tf->sepc += 4;
 }
 
+static void syscall_lseek64_fd(struct trapframe *tf) {
+    int fd = (int)tf->a0;
+    long offset = (long)tf->a1;
+    int whence = (int)tf->a2;
+    struct file *file = fd_get(get_current(), fd);
+    long ret;
+
+    if (!file)
+        ret = VFS_EBADF;
+    else
+        ret = vfs_lseek64(file, offset, whence);
+    tf->a0 = (unsigned long)ret;
+    tf->sepc += 4;
+}
+
+static void syscall_ioctl_fd(struct trapframe *tf) {
+    int fd = (int)tf->a0;
+    unsigned long request = tf->a1;
+    void *arg = (void *)tf->a2;
+    struct file *file = fd_get(get_current(), fd);
+    int ret;
+
+    if (!file)
+        ret = VFS_EBADF;
+    else
+        ret = vfs_ioctl(file, request, arg);
+    tf->a0 = (unsigned long)(long)ret;
+    tf->sepc += 4;
+}
+
 void signal_deliver(struct trapframe *tf) {
     struct thread *current = get_current();
     unsigned int *trampoline;
@@ -773,6 +805,12 @@ void syscall_handle(struct trapframe *tf) {
         break;
     case SYS_CHDIR:
         syscall_chdir_fd(tf);
+        break;
+    case SYS_LSEEK64:
+        syscall_lseek64_fd(tf);
+        break;
+    case SYS_IOCTL:
+        syscall_ioctl_fd(tf);
         break;
     default:
         uart_puts("[syscall] unknown syscall: ");

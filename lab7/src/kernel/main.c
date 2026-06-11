@@ -430,10 +430,10 @@ void start_kernel(unsigned long hartid, const void *fdt) {
     plic_enable_irq(uart_irq_number());
     task_init();
     scheduler_init();
+    video_init();
     if (vfs_init() != 0)
         uart_puts("vfs: init failed\n");
     vfs_thread_init(get_current());
-    video_init();
     uart_irq_init();
     enable_supervisor_external_interrupts();
     timer_init();

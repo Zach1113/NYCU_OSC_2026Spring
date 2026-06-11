@@ -158,6 +158,12 @@ static struct thread *user_process_create_from_image(const void *prog,
     t->parent = get_current();
     t->waiting_pid = -1;
     vfs_thread_init(t);
+    if (vfs_thread_init_stdio(t) != 0) {
+        free((void *)t->kernel_stack);
+        user_address_space_destroy(t);
+        free(t);
+        return 0;
+    }
 
     tf = (struct trapframe *)(t->kernel_stack + KERNEL_STACK_SIZE -
                               sizeof(struct trapframe));

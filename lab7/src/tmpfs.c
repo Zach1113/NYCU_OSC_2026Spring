@@ -203,6 +203,13 @@ static int tmpfs_read(struct file *file, void *buf, unsigned long len) {
     return (int)readable;
 }
 
+static long tmpfs_lseek64(struct file *file, long offset, int whence) {
+    if (!file || whence != 0 || offset < 0)
+        return VFS_EINVAL;
+    file->f_pos = (unsigned long)offset;
+    return offset;
+}
+
 static int tmpfs_write(struct file *file, const void *buf, unsigned long len) {
     struct tmpfs_node *node;
     unsigned long writable;
@@ -254,6 +261,7 @@ static struct file_operations tmpfs_f_ops = {
     .close = tmpfs_close,
     .read = tmpfs_read,
     .write = tmpfs_write,
+    .lseek64 = tmpfs_lseek64,
 };
 
 static struct filesystem tmpfs_fs = {

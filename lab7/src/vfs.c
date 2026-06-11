@@ -82,12 +82,11 @@ static struct vnode *parent_of(struct vnode *node) {
     if (node->mount && node == node->mount->root) {
         struct vnode *mountpoint = node->mount->mountpoint;
 
-        if (!mountpoint)
+        if (!mountpoint)        // rootfs root has mount but not mountpoint
             return node;
-        if (mountpoint->parent)
+        if (mountpoint->parent) // if the mountpoint has a parent, return the parent of the mountpoint    
             return mountpoint->parent;
-        return mountpoint;
-    }
+        return mountpoint;      // if the root '/' itself is a mountpoint
 
     if (node->parent)
         return node->parent;
@@ -372,6 +371,18 @@ int vfs_read(struct file *file, void *buf, unsigned long len) {
     return file->f_ops->read(file, buf, len);
 }
 
+long vfs_lseek64(struct file *file, long offset, int whence) {
+    if (!file || !file->f_ops || !file->f_ops->lseek64)
+        return VFS_EBADF;
+    return file->f_ops->lseek64(file, offset, whence);
+}
+
+int vfs_ioctl(struct file *file, unsigned long request, void *arg) {
+    if (!file || !file->f_ops || !file->f_ops->ioctl)
+        return VFS_EBADF;
+    return file->f_ops->ioctl(file, request, arg);
+}
+
 int vfs_lookup(const char *pathname, struct vnode **target) {
     return resolve_path(pathname, target, 0, 0);
 }
@@ -468,6 +479,36 @@ void vfs_thread_init(struct thread *t) {
         t->fd_table[i] = 0;
 }
 
+int vfs_thread_init_stdio(struct thread *t) {
+    struct file *opened[3];
+    int i;
+
+    if (!t)
+        return VFS_EINVAL;
+
+    for (i = 0; i < 3; i++)
+        opened[i] = 0;
+
+    for (i = 0; i < 3; i++) {
+        int ret;
+
+        if (t->fd_table[i])
+            continue;
+        ret = vfs_open("/dev/uart", 0, &opened[i]);
+        if (ret != 0) {
+            int j;
+
+            for (j = 0; j < i; j++) {
+                if (opened[j])
+                    vfs_close(opened[j]);
+            }
+            return ret;
+        }
+        t->fd_table[i] = opened[i];
+    }
+    return 0;
+}
+
 void vfs_thread_clone(struct thread *child, struct thread *parent) {
     int i;
 
@@ -511,6 +552,9 @@ int vfs_init(void) {
     ret = ramfs_init(); // register ramfs to the g_filesystems list
     if (ret != 0)
         return ret;
+    ret = devfs_init(); // register devfs to the g_filesystems list
+    if (ret != 0)
+        return ret;
 
     fs = find_filesystem("tmpfs"); // check if tmpfs is registered
     if (!fs)
@@ -538,5 +582,12 @@ int vfs_init(void) {
     ret = vfs_mkdir("/ramfs");
     if (ret != 0 && ret != VFS_EEXIST)
         return ret;
-    return vfs_mount("/ramfs", "ramfs");
+    ret = vfs_mount("/ramfs", "ramfs");
+    if (ret != 0)
+        return ret;
+
+    ret = vfs_mkdir("/dev");
+    if (ret != 0 && ret != VFS_EEXIST)
+        return ret;
+    return vfs_mount("/dev", "devfs");
 }

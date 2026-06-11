@@ -152,6 +152,13 @@ static int ramfs_read(struct file *file, void *buf, unsigned long len) {
     return (int)readable;
 }
 
+static long ramfs_lseek64(struct file *file, long offset, int whence) {
+    if (!file || whence != 0 || offset < 0)
+        return VFS_EINVAL;
+    file->f_pos = (unsigned long)offset;
+    return offset;
+}
+
 static int ramfs_write(struct file *file, const void *buf, unsigned long len) {
     (void)file;
     (void)buf;
@@ -185,6 +192,7 @@ static struct file_operations ramfs_f_ops = {
     .close = ramfs_close,
     .read = ramfs_read,
     .write = ramfs_write,
+    .lseek64 = ramfs_lseek64,
 };
 
 static struct filesystem ramfs_fs = {

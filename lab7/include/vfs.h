@@ -41,6 +41,7 @@ struct file_operations {
     int (*read)(struct file *file, void *buf, unsigned long len);
     int (*write)(struct file *file, const void *buf, unsigned long len);
     long (*lseek64)(struct file *file, long offset, int whence);
+    int (*ioctl)(struct file *file, unsigned long request, void *arg);
 };
 
 struct vnode_operations {
@@ -90,6 +91,8 @@ int vfs_open(const char *pathname, int flags, struct file **target);
 int vfs_close(struct file *file);
 int vfs_write(struct file *file, const void *buf, unsigned long len);
 int vfs_read(struct file *file, void *buf, unsigned long len);
+long vfs_lseek64(struct file *file, long offset, int whence);
+int vfs_ioctl(struct file *file, unsigned long request, void *arg);
 int vfs_mkdir(const char *pathname);
 int vfs_mount(const char *target, const char *filesystem);
 int vfs_lookup(const char *pathname, struct vnode **target);
@@ -100,10 +103,12 @@ struct file *vfs_alloc_file(struct vnode *node, int flags);
 void vfs_free_file(struct file *file);
 
 void vfs_thread_init(struct thread *t);
+int vfs_thread_init_stdio(struct thread *t);
 void vfs_thread_clone(struct thread *child, struct thread *parent);
 void vfs_thread_cleanup(struct thread *t);
 
 int tmpfs_init(void);
 int ramfs_init(void);
+int devfs_init(void);
 
 #endif
