@@ -87,6 +87,7 @@ static struct vnode *parent_of(struct vnode *node) {
         if (mountpoint->parent) // if the mountpoint has a parent, return the parent of the mountpoint    
             return mountpoint->parent;
         return mountpoint;      // if the root '/' itself is a mountpoint
+    }
 
     if (node->parent)
         return node->parent;
